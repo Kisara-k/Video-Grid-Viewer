@@ -862,22 +862,33 @@ function setupEv() {
   document.addEventListener('click', e => {
     if (!ctx.contains(e.target)) hideCtx();
   });
-  document.addEventListener('keydown', onKey);
+  document.addEventListener('keydown', e => { onKey(e); updateSelCursor(e); });
+  document.addEventListener('keyup',   updateSelCursor);
+}
+
+function updateSelCursor(e) {
+  const held = e.shiftKey || e.ctrlKey || e.metaKey;
+  if (mode === 'view') {
+    canvas.style.cursor = held ? 'crosshair' : (pan ? 'grabbing' : 'grab');
+  } else if (mode === 'node' || mode === 'lbl') {
+    canvas.style.cursor = 'crosshair';
+  } else {
+    canvas.style.cursor = held ? 'crosshair' : 'default';
+  }
 }
 
 function onCvDown(e) {
   if (e.button !== 0) return;
   if (e.target.closest('.node')) return;
-  if (mode !== 'view') return;
 
-  if (e.shiftKey) {
-    // Shift+drag → lasso selection
+  if (e.shiftKey || e.ctrlKey) {
+    // Shift/Ctrl+drag → lasso selection
     const { x, y } = mXY(e);
     lasso = { x0: x, y0: y, x1: x, y1: y };
     document.getElementById('sel-rect').style.display = 'block';
     updateLassoRect();
-  } else {
-    // Plain drag → pan viewport
+  } else if (mode === 'view') {
+    // Plain drag in view mode → pan viewport
     pan = { startSL: cw.scrollLeft, startST: cw.scrollTop, startX: e.clientX, startY: e.clientY, moved: false };
     canvas.style.cursor = 'grabbing';
     const mv = me => {
@@ -970,7 +981,7 @@ function onCvUp() {
 function onNDown(id, e) {
   if (e.button !== 0) return;
   e.stopPropagation();
-  if (e.shiftKey) return; // shift-click handled entirely in onNClick
+  if (e.shiftKey || e.ctrlKey) return; // selection modifier — handled in onNClick
   const sx = e.clientX, sy = e.clientY;
   let moved = false;
   const mv = me => {
@@ -1004,13 +1015,16 @@ function onNClick(id, e) {
   const n = S.nodes.find(n => n.id === id);
   if (!n) return;
 
-  // Shift-click: toggle multi-selection (view mode only)
-  if (e.shiftKey && mode === 'view') {
+  // Shift/Ctrl-click: toggle multi-selection (view mode only)
+  if (e.shiftKey || e.ctrlKey) {
+    // If there's a single-select node not yet in selIds, absorb it first
+    if (selId && !selIds.has(selId)) selIds.add(selId);
+    selId = null;
+
     if (selIds.has(id)) {
       selIds.delete(id);
     } else {
       selIds.add(id);
-      selId = null;
     }
     if (selIds.size > 1) {
       openMultiSB();
