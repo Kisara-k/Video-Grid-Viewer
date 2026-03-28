@@ -1,0 +1,1343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Grid Viewer</title>
+<style>
+:root {
+  --bg: #07091a;
+  --grid-ortho: rgba(38, 65, 130, 0.28);
+  --grid-diag: rgba(38, 65, 130, 0.13);
+  --tb: rgba(7, 9, 26, 0.97);
+  --sb: rgba(8, 11, 24, 0.98);
+  --acc: #4a8fd9;
+  --text: #cdd6f4;
+  --dim: #4a5a7a;
+  --bord: rgba(74, 143, 217, 0.2);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--text);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  overflow: hidden; height: 100vh; width: 100vw; user-select: none;
+}
+
+/* ── Toolbar ────────────────────────────────────────────────────────────── */
+#tb {
+  position: fixed; top: 0; left: 0; right: 0; height: 46px;
+  background: var(--tb); border-bottom: 1px solid var(--bord);
+  display: flex; align-items: center; gap: 5px; padding: 0 12px; z-index: 100;
+}
+#tb-title { font-size: 13px; font-weight: 700; color: var(--acc); margin-right: 6px; white-space: nowrap; }
+.tsep { width: 1px; height: 26px; background: var(--bord); margin: 0 3px; flex-shrink: 0; }
+.btn {
+  padding: 5px 10px; border: 1px solid rgba(74,143,217,0.3);
+  background: rgba(74,143,217,0.07); color: var(--text);
+  border-radius: 5px; cursor: pointer; font-size: 11px; font-family: inherit;
+  transition: all 0.13s; white-space: nowrap; flex-shrink: 0;
+}
+.btn:hover { background: rgba(74,143,217,0.2); border-color: rgba(74,143,217,0.5); }
+.btn.on  { background: rgba(74,143,217,0.3); border-color: var(--acc); color: #fff; }
+.btn.red { border-color: rgba(255,90,90,0.3); background: rgba(255,90,90,0.07); }
+.btn.red:hover, .btn.red.on { background: rgba(255,90,90,0.2); border-color: rgba(255,90,90,0.65); color: #ff8888; }
+#hint { font-size: 11px; color: var(--dim); margin-left: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* toolbar control groups */
+.zgroup { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.zgroup label { font-size: 10px; color: var(--dim); white-space: nowrap; }
+.zgroup input[type=range] {
+  width: 70px; height: 4px; accent-color: var(--acc); cursor: pointer;
+}
+.zgroup input[type=number] {
+  background: rgba(255,255,255,0.04); border: 1px solid rgba(74,143,217,0.25);
+  color: var(--text); border-radius: 4px; font-size: 11px; font-family: inherit;
+  outline: none; -moz-appearance: textfield; appearance: textfield;
+}
+.zgroup input[type=number]::-webkit-inner-spin-button { opacity: 0.5; }
+.zgroup input[type=number]:focus { border-color: var(--acc); }
+.zgroup span { font-size: 10px; color: var(--text); width: 32px; text-align: right; }
+
+/* ── Canvas ─────────────────────────────────────────────────────────────── */
+#cw {
+  position: fixed; top: 46px; left: 0; right: 0; bottom: 0; overflow: auto;
+}
+#cw::-webkit-scrollbar { width: 8px; height: 8px; }
+#cw::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); }
+#cw::-webkit-scrollbar-thumb { background: rgba(74,143,217,0.22); border-radius: 4px; }
+
+#canvas {
+  position: relative;
+  background-color: var(--bg);
+}
+#svg-layer {
+  position: absolute; top: 0; left: 0; overflow: visible;
+  pointer-events: none;
+}
+#svg-layer .chit { pointer-events: stroke; cursor: pointer; }
+#nl { position: absolute; top: 0; left: 0; }
+
+/* ── Nodes ──────────────────────────────────────────────────────────────── */
+.node {
+  position: absolute; transform: translate(-50%, -50%);
+  cursor: pointer; z-index: 10;
+}
+.nb {                          /* node ball — width/height set inline by JS */
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.22);
+  display: flex; align-items: center; justify-content: center;
+  position: relative; overflow: hidden;
+  transition: transform 0.14s, box-shadow 0.14s;
+}
+/* specular highlight — percentage-based so it scales with the ball */
+.nb::before {
+  content: ''; position: absolute;
+  top: 13%; left: 20%; width: 30%; height: 22%;
+  background: radial-gradient(ellipse, rgba(255,255,255,0.52) 0%, transparent 70%);
+  border-radius: 50%; z-index: 2; pointer-events: none;
+}
+/* icon & label font-size/position set inline by JS */
+.ni { z-index: 3; line-height: 1; pointer-events: none; }
+.nl-txt {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  color: rgba(255,255,255,0.8); line-height: 1.3;
+  text-shadow: 0 0 6px #000, 0 1px 3px #000;
+  pointer-events: none; text-align: center;
+}
+.node:hover .nb { transform: scale(1.12); }
+.node.sel .nb   { border-color: rgba(255,255,255,0.85) !important; outline: 2px solid rgba(255,255,255,0.3); outline-offset: 2px; }
+.node.csrc .nb  { animation: pulse 0.85s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.16); } }
+
+/* diamond — width/height set inline by JS */
+.node.diamond .nb { border-radius: 6px; transform: rotate(45deg); }
+.node.diamond .ni { transform: rotate(-45deg); }
+.node.diamond:hover .nb { transform: rotate(45deg) scale(1.1); }
+.node.diamond.sel .nb { transform: rotate(45deg); }
+
+/* label-only — all sizing handled inline by JS */
+.node.lbl .nb { display: none; }
+
+/* ghost — width/height set inline by JS via updateGhost() */
+#ghost {
+  position: absolute; transform: translate(-50%,-50%); border-radius: 50%;
+  border: 2px dashed rgba(74,143,217,0.5); background: rgba(74,143,217,0.07);
+  pointer-events: none; display: none; z-index: 5;
+}
+
+/* ── Tooltip ────────────────────────────────────────────────────────────── */
+#tt {
+  position: fixed; z-index: 500;
+  background: rgba(6, 10, 22, 0.96);
+  border: 1px solid rgba(74,143,217,0.35);
+  border-radius: 9px; padding: 10px 12px; width: 220px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.6);
+  pointer-events: auto;
+}
+#tt.hidden { display: none; }
+#tt-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+#tt-icon { font-size: 18px; line-height: 1; }
+#tt-name { font-size: 12px; font-weight: 600; color: #fff; flex: 1; }
+#tt-dur  { font-size: 10px; color: var(--dim); margin-bottom: 7px; }
+#tt-dur span { color: var(--acc); }
+#tt-notes-lbl { font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); margin-bottom: 4px; }
+#tt-notes {
+  width: 100%; background: rgba(255,255,255,0.04);
+  border: 1px solid var(--bord); color: var(--text);
+  padding: 5px 7px; border-radius: 5px; font-size: 11px;
+  font-family: inherit; resize: vertical; min-height: 52px; outline: none;
+}
+#tt-notes:focus { border-color: var(--acc); }
+#tt-play {
+  margin-top: 7px; width: 100%; padding: 5px; background: rgba(74,143,217,0.15);
+  border: 1px solid rgba(74,143,217,0.3); color: var(--text);
+  border-radius: 5px; cursor: pointer; font-size: 11px; font-family: inherit;
+}
+#tt-play:hover { background: rgba(74,143,217,0.3); }
+
+/* ── Sidebar ────────────────────────────────────────────────────────────── */
+#sb {
+  position: fixed; top: 46px; right: 0; width: 265px; bottom: 0;
+  background: var(--sb); border-left: 1px solid var(--bord);
+  padding: 13px; overflow-y: auto; z-index: 90;
+  transform: translateX(100%); transition: transform 0.2s ease;
+}
+#sb.open { transform: translateX(0); }
+#sb h3 { font-size: 10px; font-weight: 700; color: var(--acc); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 12px; }
+.f { margin-bottom: 10px; }
+.f label { display: block; font-size: 9px; color: var(--dim); margin-bottom: 3px; text-transform: uppercase; letter-spacing: 0.05em; }
+.f input, .f select {
+  width: 100%; background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(74,143,217,0.22); color: var(--text);
+  padding: 6px 8px; border-radius: 5px; font-size: 11px; font-family: inherit; outline: none;
+}
+.f input:focus, .f select:focus { border-color: var(--acc); }
+.cg { display: grid; grid-template-columns: repeat(8,1fr); gap: 5px; }
+.cs {
+  aspect-ratio: 1; border-radius: 50%; cursor: pointer;
+  border: 2px solid transparent; transition: transform 0.12s;
+}
+.cs:hover { transform: scale(1.2); }
+.cs.on { border-color: #fff; transform: scale(1.12); }
+.sbb { display: flex; gap: 6px; margin-top: 12px; }
+.sbb .btn { flex: 1; text-align: center; }
+.ce { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; font-size: 10px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+.ce:last-child { border: none; }
+.cdel { background: none; border: none; color: var(--dim); cursor: pointer; font-size: 12px; }
+.cdel:hover { color: #ff6b6b; }
+
+/* ── Video modal ────────────────────────────────────────────────────────── */
+#vm {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.87);
+  z-index: 200; display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(5px);
+}
+#vm.hidden { display: none; }
+#vm-box {
+  background: #090e20; border: 1px solid rgba(74,143,217,0.3); border-radius: 10px;
+  overflow: hidden; max-width: 900px; width: 92vw;
+  box-shadow: 0 22px 60px rgba(0,0,0,0.75);
+}
+#vm-hdr {
+  padding: 11px 14px; display: flex; align-items: center;
+  justify-content: space-between; border-bottom: 1px solid var(--bord);
+}
+#vm-title { font-size: 13px; font-weight: 600; }
+#vm-close { background: none; border: none; color: var(--dim); cursor: pointer; font-size: 17px; padding: 2px 6px; }
+#vm-close:hover { color: #fff; }
+#vp { width: 100%; max-height: 68vh; display: block; background: #000; }
+
+/* ── Context menu ───────────────────────────────────────────────────────── */
+#ctx {
+  position: fixed; background: rgba(7,10,22,0.98);
+  border: 1px solid rgba(74,143,217,0.28); border-radius: 7px; padding: 4px;
+  z-index: 300; min-width: 152px; box-shadow: 0 8px 26px rgba(0,0,0,0.6);
+}
+#ctx.hidden { display: none; }
+.ci { padding: 7px 11px; font-size: 11px; cursor: pointer; border-radius: 4px; display: flex; align-items: center; gap: 8px; }
+.ci:hover { background: rgba(74,143,217,0.18); }
+.ci.red:hover { background: rgba(255,80,80,0.2); color: #ff7070; }
+.csep { height: 1px; background: var(--bord); margin: 3px 0; }
+
+/* ── Toast ──────────────────────────────────────────────────────────────── */
+#toast {
+  position: fixed; top: 56px; left: 50%; transform: translateX(-50%);
+  background: rgba(74,143,217,0.92); color: #fff;
+  padding: 6px 16px; border-radius: 20px; font-size: 11px;
+  z-index: 400; opacity: 0; transition: opacity 0.22s; pointer-events: none;
+}
+#toast.show { opacity: 1; }
+
+/* ── Help ───────────────────────────────────────────────────────────────── */
+#help {
+  position: fixed; bottom: 13px; left: 13px;
+  background: rgba(6,9,22,0.87); border: 1px solid var(--bord);
+  border-radius: 7px; padding: 9px 13px; font-size: 10px; color: var(--dim);
+  line-height: 1.9; z-index: 80;
+}
+#help b { color: var(--text); }
+</style>
+</head>
+<body>
+
+<!-- Toolbar -->
+<div id="tb">
+  <span id="tb-title">⊕ Grid Viewer</span>
+  <div class="tsep"></div>
+  <button class="btn on"  id="bv" onclick="setMode('view')">View</button>
+  <button class="btn"     id="bn" onclick="setMode('node')">+ Node</button>
+  <button class="btn"     id="bl" onclick="setMode('lbl')">T Label</button>
+  <button class="btn"     id="bc" onclick="setMode('conn')">→ Connect</button>
+  <button class="btn red" id="bd" onclick="setMode('del')">✕ Delete</button>
+  <div class="tsep"></div>
+  <div class="zgroup">
+    <label>X</label>
+    <input type="range" id="zx" min="0.25" max="4" step="0.05" value="1" oninput="setZoom('x',+this.value)">
+    <span id="zxv">100%</span>
+  </div>
+  <div class="zgroup">
+    <label>Y</label>
+    <input type="range" id="zy" min="0.25" max="4" step="0.05" value="1" oninput="setZoom('y',+this.value)">
+    <span id="zyv">100%</span>
+  </div>
+  <div class="tsep"></div>
+  <div class="zgroup">
+    <label>Cols</label>
+    <input type="number" id="gcols" min="10" max="300" value="52"
+           style="width:44px;padding:3px 5px;text-align:center" onchange="setGrid()">
+  </div>
+  <div class="zgroup">
+    <label>Rows</label>
+    <input type="number" id="grows" min="5" max="200" value="34"
+           style="width:44px;padding:3px 5px;text-align:center" onchange="setGrid()">
+  </div>
+  <div class="tsep"></div>
+  <div class="zgroup">
+    <label>⬤</label>
+    <input type="range" id="nsize" min="18" max="120" step="2" value="54" oninput="setNodeSize(+this.value)">
+    <span id="nsizev">54px</span>
+  </div>
+  <div class="tsep"></div>
+  <button class="btn" onclick="doSave()">💾 Save</button>
+  <button class="btn" onclick="doLoad()">📂 Load</button>
+  <button class="btn" onclick="doExport()">↑ Export</button>
+  <button class="btn red" onclick="clearAll()">Clear</button>
+  <div class="tsep"></div>
+  <span id="hint">Click nodes to play videos</span>
+</div>
+
+<!-- Canvas -->
+<div id="cw">
+  <div id="canvas">
+    <svg id="svg-layer" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="ah" markerWidth="9" markerHeight="6.5" refX="8.5" refY="3.25" orient="auto">
+          <polygon points="0 0, 9 3.25, 0 6.5" fill="rgba(255,255,255,0.68)"/>
+        </marker>
+        <marker id="ah2" markerWidth="9" markerHeight="6.5" refX="8.5" refY="3.25" orient="auto">
+          <polygon points="0 0, 9 3.25, 0 6.5" fill="rgba(255,255,255,0.3)"/>
+        </marker>
+      </defs>
+      <g id="cg"></g>
+      <line id="tl" stroke="rgba(74,143,217,0.48)" stroke-width="1.5" stroke-dasharray="6,3" display="none"/>
+    </svg>
+    <div id="nl">
+      <div id="ghost"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Tooltip -->
+<div id="tt" class="hidden">
+  <div id="tt-head">
+    <span id="tt-icon"></span>
+    <span id="tt-name"></span>
+  </div>
+  <div id="tt-dur">⏱ <span id="tt-dur-v">—</span></div>
+  <div id="tt-notes-lbl">Notes</div>
+  <textarea id="tt-notes" placeholder="Add notes..." oninput="ttNotesInput()"></textarea>
+  <button id="tt-play" onclick="ttPlay()">▶ Play Video</button>
+</div>
+
+<!-- Sidebar -->
+<div id="sb">
+  <h3>Node Properties</h3>
+  <div class="f"><label>Label</label><input id="pl" type="text" placeholder="Name" oninput="syncNode()"></div>
+  <div class="f"><label>Icon (emoji)</label><input id="pi" type="text" placeholder="🧠" maxlength="2" oninput="syncNode()"></div>
+  <div class="f"><label>Color</label><div class="cg" id="cg-pal"></div></div>
+  <div class="f"><label>Shape</label>
+    <select id="ps" onchange="syncNode()">
+      <option value="circle">Circle</option>
+      <option value="diamond">Diamond</option>
+      <option value="lbl">Section Label</option>
+    </select>
+  </div>
+  <div class="f" id="vf"><label>Video File</label><input id="pv" type="text" placeholder="videos/file.mp4" oninput="syncNode()"></div>
+  <div class="sbb">
+    <button class="btn" onclick="playSelected()">▶ Play</button>
+    <button class="btn red" onclick="delSelected()">✕ Delete</button>
+  </div>
+  <div style="margin-top:16px;padding-top:13px;border-top:1px solid var(--bord)">
+    <h3>Connections</h3>
+    <div id="cl" style="color:var(--dim);font-size:10px;"></div>
+    <button class="btn" style="margin-top:7px;width:100%" onclick="startConn()">→ Add Connection</button>
+  </div>
+</div>
+
+<!-- Video modal -->
+<div id="vm" class="hidden">
+  <div id="vm-box">
+    <div id="vm-hdr">
+      <span id="vm-title"></span>
+      <button id="vm-close" onclick="closeVid()">✕</button>
+    </div>
+    <video id="vp" controls>
+      <source id="vs" src="" type="video/mp4">
+    </video>
+  </div>
+</div>
+
+<!-- Context menu -->
+<div id="ctx" class="hidden">
+  <div class="ci" id="ctx-e"  onclick="ctxEdit()">✏️  Edit</div>
+  <div class="ci" id="ctx-p"  onclick="ctxPlay()">▶  Play Video</div>
+  <div class="ci" id="ctx-c"  onclick="ctxConn()">→  Connect From</div>
+  <div class="csep"></div>
+  <div class="ci red" id="ctx-d" onclick="ctxDel()">✕  Delete</div>
+</div>
+
+<!-- Toast & Help -->
+<div id="toast"></div>
+<div id="help">
+  <b>V</b> View &nbsp;<b>N</b> Node &nbsp;<b>C</b> Connect &nbsp;<b>D</b> Delete<br>
+  <b>Drag</b> Move &nbsp;<b>Esc</b> Cancel &nbsp;<b>Right-click</b> Menu<br>
+  Hover node → tooltip &nbsp;|&nbsp; X/Y sliders → zoom
+</div>
+
+<!-- Hidden video probe for duration -->
+<video id="vprobe" preload="metadata" style="display:none"></video>
+
+<script>
+'use strict';
+
+// ── Constants / mutable view settings ─────────────────────────────────────
+const GS = 80;      // grid cell size px (base, never changes)
+let CW       = 52;  // grid columns  (editable)
+let CH       = 34;  // grid rows     (editable)
+let nodeSize = 54;  // node diameter px (editable)
+let NR       = 27;  // node radius = nodeSize/2 (derived, kept in sync)
+
+const PAL = [
+  '#ff6b6b','#ff9f43','#ffd32a','#ffeaa7',
+  '#a29bfe','#6c5ce7','#74b9ff','#0984e3',
+  '#fd79a8','#e84393','#00cec9','#55efc4',
+  '#00b894','#fdcb6e','#b2bec3','#636e72',
+];
+
+const HINTS = {
+  view:'Click node → play video  |  Drag to reposition',
+  node:'Click grid intersection to place a node',
+  lbl: 'Click grid to place a section label',
+  conn:'Click source node then target node',
+  del: 'Click a node or connection to delete it',
+};
+
+// ── State ──────────────────────────────────────────────────────────────────
+let S = { nodes: [], conns: [] };
+let UID = 1;
+const nid = () => 'n' + (UID++);
+const cid = () => 'c' + (UID++);
+
+let mode     = 'view';
+let selId    = null;
+let connFrom = null;
+let drag     = null;   // { id }
+let ctxTgt   = null;
+let ttNodeId = null;
+let overTT   = false;
+let overNode = false;
+let ttHide   = null;
+let zoomX    = 1;
+let zoomY    = 1;
+
+// File System API handle for direct file save
+let fileHandle = null;
+
+// Duration cache
+const durCache = {};
+
+// ── DOM ────────────────────────────────────────────────────────────────────
+const canvas = document.getElementById('canvas');
+const cw     = document.getElementById('cw');
+const svg    = document.getElementById('svg-layer');
+const cg     = document.getElementById('cg');
+const tl     = document.getElementById('tl');
+const nl     = document.getElementById('nl');
+const ghost  = document.getElementById('ghost');
+const sb     = document.getElementById('sb');
+const ctx    = document.getElementById('ctx');
+const tt     = document.getElementById('tt');
+const toast  = document.getElementById('toast');
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+function boot() {
+  buildPal();
+  load();          // load first — may update CW/CH/nodeSize/zoom vars
+  syncViewUI();    // reflect loaded vars into toolbar controls
+  sizeCanvas();
+  if (!S.nodes.length) loadSample();
+  render();
+  setupEv();
+  cw.scrollLeft = (GS * CW * zoomX - cw.clientWidth)  / 2;
+  cw.scrollTop  = (GS * CH * zoomY - cw.clientHeight) / 3;
+}
+
+// Push current view variables into the toolbar widgets
+function syncViewUI() {
+  document.getElementById('zx').value    = zoomX;
+  document.getElementById('zy').value    = zoomY;
+  document.getElementById('zxv').textContent = Math.round(zoomX*100)+'%';
+  document.getElementById('zyv').textContent = Math.round(zoomY*100)+'%';
+  document.getElementById('gcols').value = CW;
+  document.getElementById('grows').value = CH;
+  document.getElementById('nsize').value = nodeSize;
+  document.getElementById('nsizev').textContent = nodeSize+'px';
+}
+
+function buildPal() {
+  const g = document.getElementById('cg-pal');
+  PAL.forEach(c => {
+    const d = document.createElement('div');
+    d.className = 'cs';
+    d.style.background = c;
+    d.style.boxShadow = `0 0 5px ${c}77`;
+    d.onclick = () => pickCol(c);
+    g.appendChild(d);
+  });
+}
+
+function sizeCanvas() {
+  const w = Math.round(GS * CW * zoomX);
+  const h = Math.round(GS * CH * zoomY);
+  canvas.style.width  = w + 'px';
+  canvas.style.height = h + 'px';
+  svg.setAttribute('width', w);
+  svg.setAttribute('height', h);
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  nl.style.width  = w + 'px';
+  nl.style.height = h + 'px';
+
+  // Grid background: orthogonal lines + faint diagonal lines
+  const gx = GS * zoomX, gy = GS * zoomY;
+  canvas.style.backgroundImage = [
+    `linear-gradient(var(--grid-ortho) 1px, transparent 1px)`,
+    `linear-gradient(90deg, var(--grid-ortho) 1px, transparent 1px)`,
+    `linear-gradient(45deg, var(--grid-diag) 1px, transparent 1px)`,
+    `linear-gradient(-45deg, var(--grid-diag) 1px, transparent 1px)`,
+  ].join(',');
+  canvas.style.backgroundSize = `${gx}px ${gy}px`;
+  canvas.style.backgroundPosition = '0 0';
+  updateGhost();
+}
+
+function updateGhost() {
+  ghost.style.width  = nodeSize + 'px';
+  ghost.style.height = nodeSize + 'px';
+}
+
+// ── Zoom ───────────────────────────────────────────────────────────────────
+function setZoom(axis, v) {
+  if (axis === 'x') { zoomX = v; document.getElementById('zxv').textContent = Math.round(v*100)+'%'; }
+  else              { zoomY = v; document.getElementById('zyv').textContent = Math.round(v*100)+'%'; }
+  sizeCanvas();
+  render();
+  autoSave();
+}
+
+// ── Grid dimensions ─────────────────────────────────────────────────────────
+function setGrid() {
+  const nc = Math.max(10, Math.min(300, parseInt(document.getElementById('gcols').value) || CW));
+  const nr = Math.max(5,  Math.min(200, parseInt(document.getElementById('grows').value) || CH));
+  // Clamp existing node positions to stay inside the new bounds
+  S.nodes.forEach(n => { n.col = Math.min(n.col, nc-2); n.row = Math.min(n.row, nr-2); });
+  CW = nc; CH = nr;
+  document.getElementById('gcols').value = CW;
+  document.getElementById('grows').value = CH;
+  sizeCanvas(); render(); autoSave();
+}
+
+// ── Node size ───────────────────────────────────────────────────────────────
+function setNodeSize(v) {
+  nodeSize = Math.round(v);
+  NR = nodeSize / 2;
+  document.getElementById('nsizev').textContent = nodeSize + 'px';
+  updateGhost();
+  render();
+  autoSave();
+}
+
+// ── Mode ───────────────────────────────────────────────────────────────────
+function setMode(m) {
+  mode = m; connFrom = null;
+  tl.setAttribute('display', 'none');
+  ['bv','bn','bl','bc','bd'].forEach(id => document.getElementById(id).classList.remove('on'));
+  const map = { view:'bv', node:'bn', lbl:'bl', conn:'bc', del:'bd' };
+  if (map[m]) document.getElementById(map[m]).classList.add('on');
+  document.getElementById('hint').textContent = HINTS[m] || '';
+  canvas.style.cursor = (m === 'node' || m === 'lbl') ? 'crosshair' : 'default';
+  if (m !== 'node' && m !== 'lbl') ghost.style.display = 'none';
+  renderNodes();
+}
+
+// ── Render ─────────────────────────────────────────────────────────────────
+function render() { renderConns(); renderNodes(); }
+
+function renderNodes() {
+  const kept = new Set();
+  S.nodes.forEach(n => {
+    kept.add(n.id);
+    let el = document.getElementById('nd-' + n.id);
+    if (!el) { el = mkNode(n); nl.appendChild(el); }
+    applyNode(el, n);
+  });
+  nl.querySelectorAll('.node').forEach(el => {
+    if (!kept.has(el.dataset.id)) el.remove();
+  });
+}
+
+function mkNode(n) {
+  const el = document.createElement('div');
+  el.className = 'node';
+  el.id = 'nd-' + n.id;
+  el.dataset.id = n.id;
+  el.innerHTML = `<div class="nb"><span class="ni"></span></div><div class="nl-txt"></div>`;
+  el.addEventListener('mousedown',    e => onNDown(n.id, e));
+  el.addEventListener('click',        e => onNClick(n.id, e));
+  el.addEventListener('contextmenu',  e => onNCtx(n.id, e));
+  el.addEventListener('mouseenter',   e => onNEnter(n.id, e));
+  el.addEventListener('mouseleave',   ()  => onNLeave());
+  return el;
+}
+
+function applyNode(el, n) {
+  const { x, y } = g2p(n.col, n.row);
+  el.style.left = x + 'px';
+  el.style.top  = y + 'px';
+
+  el.className = 'node'
+    + (n.shape === 'diamond' ? ' diamond' : '')
+    + (n.shape === 'lbl'     ? ' lbl'     : '')
+    + (selId === n.id        ? ' sel'     : '')
+    + (connFrom === n.id     ? ' csrc'    : '');
+
+  const ball = el.querySelector('.nb');
+  const icon = el.querySelector('.ni');
+  const lbl  = el.querySelector('.nl-txt');
+
+  // ── Section label (no circle) ──────────────────────────────────────────
+  if (n.shape === 'lbl') {
+    ball.style.cssText = '';
+    icon.textContent   = '';
+    icon.style.fontSize = '';
+    // Scale label font with nodeSize but keep it readable as a header
+    const fs = Math.max(11, Math.round(nodeSize * 0.28));
+    lbl.style.cssText       = '';   // reset all inline
+    lbl.style.position      = 'static';
+    lbl.style.transform     = 'none';
+    lbl.style.fontSize      = fs + 'px';
+    lbl.style.fontWeight    = '700';
+    lbl.style.color         = n.color || '#a29bfe';
+    lbl.style.textShadow    = 'none';
+    lbl.style.whiteSpace    = 'nowrap';
+    lbl.style.overflow      = 'visible';
+    lbl.style.maxWidth      = 'none';
+    lbl.style.display       = 'block';
+    lbl.style.marginTop     = '2px';
+    lbl.textContent         = n.label || '';
+    return;
+  }
+
+  // ── Circle or Diamond ──────────────────────────────────────────────────
+  const diam   = (n.shape === 'diamond') ? Math.round(nodeSize * 0.72) : nodeSize;
+  const iconFs = Math.max(10, Math.round(diam * 0.36));
+  const lblFs  = Math.max(8,  Math.min(11, Math.round(nodeSize * 0.2)));
+  // Label sits below the bottom edge of the circle
+  const lblBot = -(NR + 7);
+  const lblMaxW = Math.max(nodeSize * 1.9, 60);
+
+  // Ball dimensions
+  ball.style.width  = diam + 'px';
+  ball.style.height = diam + 'px';
+
+  // Icon size
+  icon.style.fontSize = iconFs + 'px';
+
+  // Label — wrap to 2 lines when circles are small
+  lbl.style.bottom   = lblBot + 'px';
+  lbl.style.fontSize = lblFs  + 'px';
+  lbl.style.maxWidth = lblMaxW + 'px';
+  lbl.style.position = 'absolute';
+  lbl.style.transform = 'translateX(-50%)';
+  lbl.style.marginTop = '';
+
+  if (nodeSize < 44) {
+    // 2-line wrap with clamp
+    lbl.style.whiteSpace = 'normal';
+    lbl.style.overflow   = 'hidden';
+    lbl.style.textOverflow = 'clip';
+    lbl.style.display    = '-webkit-box';
+    lbl.style.setProperty('-webkit-line-clamp', '2');
+    lbl.style.setProperty('-webkit-box-orient', 'vertical');
+  } else {
+    // Single line with ellipsis
+    lbl.style.whiteSpace = 'nowrap';
+    lbl.style.overflow   = 'hidden';
+    lbl.style.textOverflow = 'ellipsis';
+    lbl.style.display    = 'block';
+    lbl.style.setProperty('-webkit-line-clamp', 'unset');
+    lbl.style.setProperty('-webkit-box-orient', 'unset');
+  }
+
+  // Colours & glow
+  const c = n.color || '#a29bfe';
+  const glowR = Math.round(nodeSize * 0.3);
+  ball.style.background  = `radial-gradient(circle at 35% 30%, ${adj(c,60)} 0%, ${c} 45%, ${adj(c,-52)} 100%)`;
+  ball.style.borderColor = adj(c, 22);
+  ball.style.boxShadow   = `0 0 ${glowR}px ${c}88, 0 0 ${glowR*2}px ${c}44, inset 0 0 ${Math.round(glowR*0.8)}px rgba(0,0,0,0.32)`;
+  ball.style.color       = c;
+  icon.textContent = n.icon || '●';
+  lbl.textContent  = n.label || '';
+}
+
+function renderConns() {
+  cg.innerHTML = '';
+  S.conns.forEach(c => {
+    const fn = S.nodes.find(n => n.id === c.from);
+    const tn = S.nodes.find(n => n.id === c.to);
+    if (!fn || !tn) return;
+
+    const p1 = g2p(fn.col, fn.row);
+    const p2 = g2p(tn.col, tn.row);
+    const d = pathD(p1, p2);
+    if (!d) return;
+
+    const stroke = c.color || 'rgba(255,255,255,0.45)';
+    const marker = c.dashed ? 'url(#ah2)' : 'url(#ah)';
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+
+    const path = mkPath(d, { stroke, 'stroke-width':'1.5', fill:'none',
+      'stroke-dasharray': c.dashed ? '7,4' : 'none', 'marker-end': marker });
+
+    const hit = mkPath(d, { stroke:'transparent', 'stroke-width':'14', fill:'none' });
+    hit.classList.add('chit');
+    hit.addEventListener('click',       ev => onCClick(c.id, ev));
+    hit.addEventListener('contextmenu', ev => onCCtx(c.id, ev));
+
+    g.append(path, hit);
+    cg.appendChild(g);
+  });
+}
+
+function mkPath(d, attrs) {
+  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  p.setAttribute('d', d);
+  Object.entries(attrs).forEach(([k,v]) => p.setAttribute(k, v));
+  return p;
+}
+
+// ── Connection path routing ────────────────────────────────────────────────
+// Orthogonal L-shape with rounded corners, snapped to circle edges.
+function pathD(p1, p2) {
+  const dx = p2.x - p1.x;
+  const dy = p2.y - p1.y;
+  if (Math.abs(dx) < 2 && Math.abs(dy) < 2) return null;
+
+  const hd = dx >= 0 ? 1 : -1;  // horizontal direction (±1)
+  const vd = dy >= 0 ? 1 : -1;  // vertical direction (±1)
+
+  // ── Straight horizontal ──
+  if (Math.abs(dy) < NR * 0.6) {
+    const sx = p1.x + hd * NR, ex = p2.x - hd * NR;
+    if (Math.abs(ex - sx) < 2) return null;
+    return `M ${f(sx)} ${f(p1.y)} H ${f(ex)}`;
+  }
+
+  // ── Straight vertical ──
+  if (Math.abs(dx) < NR * 0.6) {
+    const sy = p1.y + vd * NR, ey = p2.y - vd * NR;
+    if (Math.abs(ey - sy) < 2) return null;
+    return `M ${f(p1.x)} ${f(sy)} V ${f(ey)}`;
+  }
+
+  // ── L-shape: exit horizontally, elbow, vertical, elbow, enter horizontally ──
+  // Source exits from the left or right edge of the circle
+  const sx = p1.x + hd * NR;
+  // Target is entered from left or right
+  const ex = p2.x - hd * NR;
+
+  // midX is halfway between sx and ex
+  const midX = (sx + ex) * 0.5;
+
+  // Corner radius (clamped so it doesn't overshoot)
+  const maxCR = Math.min(Math.abs(midX - sx), Math.abs(p2.y - p1.y)) * 0.45;
+  const cr = Math.min(14, maxCR);
+
+  // go horizontal sx → midX, rounded corner, go vertical, rounded corner, go horizontal → ex
+  return `M ${f(sx)} ${f(p1.y)} \
+H ${f(midX - hd*cr)} \
+Q ${f(midX)} ${f(p1.y)} ${f(midX)} ${f(p1.y + vd*cr)} \
+V ${f(p2.y - vd*cr)} \
+Q ${f(midX)} ${f(p2.y)} ${f(midX + hd*cr)} ${f(p2.y)} \
+H ${f(ex)}`;
+}
+
+const f = v => Math.round(v * 10) / 10; // round to 1 decimal
+
+// ── Events ─────────────────────────────────────────────────────────────────
+function setupEv() {
+  canvas.addEventListener('click',       onCvClick);
+  canvas.addEventListener('mousemove',   onCvMove);
+  canvas.addEventListener('mouseup',     onCvUp);
+  canvas.addEventListener('contextmenu', e => { e.preventDefault(); hideCtx(); });
+  tt.addEventListener('mouseenter', () => { overTT = true; clearTimeout(ttHide); });
+  tt.addEventListener('mouseleave', () => { overTT = false; startHideTT(); });
+  document.addEventListener('click', e => {
+    if (!ctx.contains(e.target)) hideCtx();
+  });
+  document.addEventListener('keydown', onKey);
+}
+
+function onCvClick(e) {
+  if (e.target.closest('.node')) return;
+  if (drag) return;
+  if (mode === 'node' || mode === 'lbl') {
+    const { col, row } = mGrid(e);
+    addNode(col, row, mode === 'lbl');
+  }
+  if (mode === 'conn')  { connFrom = null; renderNodes(); tl.setAttribute('display','none'); }
+  if (mode === 'view')  desel();
+}
+
+function onCvMove(e) {
+  if (mode === 'node' || mode === 'lbl') {
+    const { col, row } = mGrid(e);
+    const { x, y } = g2p(col, row);
+    ghost.style.left = x + 'px'; ghost.style.top = y + 'px'; ghost.style.display = 'block';
+  } else { ghost.style.display = 'none'; }
+
+  if (drag) {
+    const { x, y } = mXY(e);
+    const col = Math.max(1, Math.min(CW-2, Math.round(x / (GS*zoomX))));
+    const row = Math.max(1, Math.min(CH-2, Math.round(y / (GS*zoomY))));
+    const n = S.nodes.find(n => n.id === drag.id);
+    if (n) { n.col = col; n.row = row; render(); }
+  }
+
+  if (mode === 'conn' && connFrom) {
+    const fn = S.nodes.find(n => n.id === connFrom);
+    if (fn) {
+      const { x: fx, y: fy } = g2p(fn.col, fn.row);
+      const { x: mx, y: my } = mXY(e);
+      tl.setAttribute('x1',fx); tl.setAttribute('y1',fy);
+      tl.setAttribute('x2',mx); tl.setAttribute('y2',my);
+      tl.setAttribute('display','block');
+    }
+  }
+}
+
+function onCvUp() {
+  if (drag) { drag = null; autoSave(); }
+}
+
+function onNDown(id, e) {
+  if (e.button !== 0) return;
+  e.stopPropagation();
+  const sx = e.clientX, sy = e.clientY;
+  let moved = false;
+  const mv = me => {
+    if (!moved && (Math.abs(me.clientX-sx)>5 || Math.abs(me.clientY-sy)>5)) {
+      moved = true; drag = { id };
+    }
+  };
+  const up = () => { document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up); };
+  document.addEventListener('mousemove', mv);
+  document.addEventListener('mouseup',   up);
+}
+
+function onNClick(id, e) {
+  e.stopPropagation();
+  if (drag) return;
+  const n = S.nodes.find(n => n.id === id);
+  if (!n) return;
+
+  if (mode === 'view') {
+    if (n.videoFile) openVid(n); else { selId=id; openSB(n); }
+  } else if (mode === 'node' || mode === 'lbl') {
+    selId = id; openSB(n);
+  } else if (mode === 'conn') {
+    if (!connFrom) { connFrom = id; showToast('Click target node'); renderNodes(); }
+    else if (connFrom !== id) {
+      addConn(connFrom, id);
+      connFrom = null; tl.setAttribute('display','none'); renderNodes();
+    }
+  } else if (mode === 'del') {
+    delNode(id);
+  }
+}
+
+function onNCtx(id, e) {
+  e.preventDefault(); e.stopPropagation();
+  ctxTgt = id;
+  showCtx(e.clientX, e.clientY, 'node');
+}
+
+function onNEnter(id, e) {
+  overNode = true;
+  clearTimeout(ttHide);
+  ttNodeId = id;
+  const n = S.nodes.find(n => n.id === id);
+  if (!n || n.shape === 'lbl') return;
+  showTT(n, e);
+}
+
+function onNLeave() {
+  overNode = false;
+  startHideTT();
+}
+
+function onCClick(id, e) {
+  e.stopPropagation();
+  if (mode === 'del') delConn(id);
+}
+
+function onCCtx(id, e) {
+  e.preventDefault(); e.stopPropagation();
+  ctxTgt = id;
+  showCtx(e.clientX, e.clientY, 'conn');
+}
+
+function onKey(e) {
+  const t = document.activeElement.tagName;
+  if (t==='INPUT'||t==='TEXTAREA'||t==='SELECT') return;
+  if (e.key==='Escape') { setMode('view'); desel(); }
+  if ((e.key==='Delete'||e.key==='Backspace') && selId) delSelected();
+  const km = {v:'view', n:'node', c:'conn', d:'del', l:'lbl'};
+  if (km[e.key] && !e.ctrlKey && !e.metaKey) setMode(km[e.key]);
+}
+
+// ── Tooltip ────────────────────────────────────────────────────────────────
+function showTT(n, e) {
+  document.getElementById('tt-icon').textContent = n.icon || '●';
+  document.getElementById('tt-name').textContent = n.label || '';
+  document.getElementById('tt-notes').value = n.notes || '';
+  document.getElementById('tt-dur-v').textContent = '—';
+
+  if (n.videoFile) {
+    if (durCache[n.videoFile] !== undefined) {
+      document.getElementById('tt-dur-v').textContent = fmtDur(durCache[n.videoFile]);
+    } else {
+      probeDur(n.videoFile, d => {
+        durCache[n.videoFile] = d;
+        if (ttNodeId === n.id) document.getElementById('tt-dur-v').textContent = fmtDur(d);
+      });
+    }
+    document.getElementById('tt-play').style.display = '';
+  } else {
+    document.getElementById('tt-play').style.display = 'none';
+  }
+
+  posTT(e);
+  tt.classList.remove('hidden');
+}
+
+function posTT(e) {
+  const margin = 10;
+  const W = tt.offsetWidth || 220, H = tt.offsetHeight || 160;
+  let x = e.clientX + 16, y = e.clientY - 10;
+  if (x + W > window.innerWidth - margin)  x = e.clientX - W - 12;
+  if (y + H > window.innerHeight - margin) y = window.innerHeight - H - margin;
+  if (y < 50) y = 50;
+  tt.style.left = x + 'px'; tt.style.top = y + 'px';
+}
+
+function startHideTT() {
+  clearTimeout(ttHide);
+  ttHide = setTimeout(() => { if (!overNode && !overTT) tt.classList.add('hidden'); }, 180);
+}
+
+function ttNotesInput() {
+  const n = S.nodes.find(n => n.id === ttNodeId);
+  if (n) { n.notes = document.getElementById('tt-notes').value; autoSave(); }
+}
+
+function ttPlay() {
+  const n = S.nodes.find(n => n.id === ttNodeId);
+  if (n) openVid(n);
+}
+
+function probeDur(src, cb) {
+  const vp = document.getElementById('vprobe');
+  vp.src = src;
+  const done = () => { cb(isFinite(vp.duration) ? vp.duration : null); vp.src = ''; };
+  vp.onloadedmetadata = done;
+  vp.onerror = () => { cb(null); vp.src = ''; };
+}
+
+function fmtDur(s) {
+  if (!s || isNaN(s)) return '?:??';
+  const m = Math.floor(s/60), sec = Math.floor(s%60);
+  return `${m}:${sec.toString().padStart(2,'0')}`;
+}
+
+// ── CRUD ───────────────────────────────────────────────────────────────────
+function addNode(col, row, isLbl) {
+  if (S.nodes.find(n => n.col===col && n.row===row)) { showToast('Spot taken'); return; }
+  const n = {
+    id: nid(), col, row,
+    label: isLbl ? 'Section' : 'New Node',
+    icon: isLbl ? '' : '●',
+    color: PAL[Math.floor(Math.random()*PAL.length)],
+    shape: isLbl ? 'lbl' : 'circle',
+    videoFile: '', notes: '',
+  };
+  S.nodes.push(n); render();
+  selId = n.id; openSB(n);
+  autoSave(); showToast('Node added');
+}
+
+function delNode(id) {
+  S.nodes = S.nodes.filter(n => n.id !== id);
+  S.conns = S.conns.filter(c => c.from !== id && c.to !== id);
+  if (selId === id) desel();
+  render(); autoSave();
+}
+
+function delSelected() { if (selId) delNode(selId); }
+
+function addConn(from, to) {
+  if (S.conns.find(c => c.from===from && c.to===to)) { showToast('Already connected'); return; }
+  const fn = S.nodes.find(n => n.id===from);
+  S.conns.push({ id:cid(), from, to, dashed:false, label:'', color: fn ? fn.color+'88' : 'rgba(255,255,255,0.45)' });
+  renderConns(); autoSave(); showToast('Connected');
+}
+
+function delConn(id) {
+  S.conns = S.conns.filter(c => c.id !== id);
+  renderConns(); autoSave();
+  if (selId) updConnList(selId);
+}
+
+// ── Sidebar ────────────────────────────────────────────────────────────────
+function openSB(n) {
+  document.getElementById('pl').value = n.label || '';
+  document.getElementById('pi').value = n.icon  || '';
+  document.getElementById('pv').value = n.videoFile || '';
+  document.getElementById('ps').value = n.shape || 'circle';
+  document.getElementById('vf').style.display = n.shape === 'lbl' ? 'none' : '';
+  document.querySelectorAll('.cs').forEach((s,i) => s.classList.toggle('on', PAL[i]===n.color));
+  updConnList(n.id);
+  sb.classList.add('open');
+}
+
+function desel() { selId = null; sb.classList.remove('open'); renderNodes(); }
+
+function updConnList(id) {
+  const out = S.conns.filter(c => c.from===id);
+  const inn = S.conns.filter(c => c.to===id);
+  let h = '';
+  if (out.length) {
+    h += '<div style="margin-bottom:7px"><b style="color:var(--text)">→ Out</b>';
+    out.forEach(c => {
+      const tn = S.nodes.find(n => n.id===c.to);
+      h += `<div class="ce"><span>${esc(tn?.label||c.to)}</span>
+        <div style="display:flex;align-items:center;gap:5px">
+          <label style="font-size:9px;cursor:pointer;color:var(--dim)">
+            <input type="checkbox" ${c.dashed?'checked':''} onchange="setDash('${c.id}',this.checked)"> dash
+          </label>
+          <button class="cdel" onclick="delConn('${c.id}')">✕</button>
+        </div></div>`;
+    }); h += '</div>';
+  }
+  if (inn.length) {
+    h += '<div><b style="color:var(--text)">← In</b>';
+    inn.forEach(c => {
+      const fn = S.nodes.find(n => n.id===c.from);
+      h += `<div class="ce"><span>${esc(fn?.label||c.from)}</span></div>`;
+    }); h += '</div>';
+  }
+  if (!out.length && !inn.length) h = 'No connections.';
+  document.getElementById('cl').innerHTML = h;
+}
+
+function syncNode() {
+  if (!selId) return;
+  const n = S.nodes.find(n => n.id===selId);
+  if (!n) return;
+  n.label     = document.getElementById('pl').value;
+  n.icon      = document.getElementById('pi').value || '●';
+  n.videoFile = document.getElementById('pv').value;
+  n.shape     = document.getElementById('ps').value;
+  document.getElementById('vf').style.display = n.shape === 'lbl' ? 'none' : '';
+  render(); autoSave();
+}
+
+function pickCol(c) {
+  if (!selId) return;
+  const n = S.nodes.find(n => n.id===selId);
+  if (!n) return;
+  n.color = c;
+  S.conns.filter(cn => cn.from===selId).forEach(cn => { cn.color = c+'88'; });
+  document.querySelectorAll('.cs').forEach((s,i) => s.classList.toggle('on', PAL[i]===c));
+  render(); autoSave();
+}
+
+function setDash(connId, v) {
+  const c = S.conns.find(c => c.id===connId);
+  if (c) { c.dashed = v; renderConns(); autoSave(); }
+}
+
+function playSelected() {
+  const n = S.nodes.find(n => n.id===selId);
+  if (n) openVid(n);
+}
+
+function startConn() {
+  if (!selId) return;
+  setMode('conn'); connFrom = selId;
+  showToast('Click target node'); renderNodes();
+}
+
+// ── Context menu ───────────────────────────────────────────────────────────
+function showCtx(x, y, type) {
+  ctx.classList.remove('hidden');
+  ctx.style.left = Math.min(x, window.innerWidth-170)+'px';
+  ctx.style.top  = Math.min(y, window.innerHeight-160)+'px';
+  const isNode = type==='node';
+  ['ctx-e','ctx-p','ctx-c'].forEach(id => document.getElementById(id).style.display = isNode ? '' : 'none');
+}
+function hideCtx() { ctx.classList.add('hidden'); }
+function ctxEdit() { const n=S.nodes.find(n=>n.id===ctxTgt); if(n){selId=ctxTgt;openSB(n);setMode('node');} hideCtx(); }
+function ctxPlay() { const n=S.nodes.find(n=>n.id===ctxTgt); if(n)openVid(n); hideCtx(); }
+function ctxConn() { setMode('conn'); connFrom=ctxTgt; showToast('Click target node'); renderNodes(); hideCtx(); }
+function ctxDel()  {
+  if (S.nodes.find(n=>n.id===ctxTgt)) delNode(ctxTgt);
+  else delConn(ctxTgt);
+  hideCtx();
+}
+
+// ── Video ──────────────────────────────────────────────────────────────────
+function openVid(n) {
+  if (!n.videoFile) { showToast('No video file set'); return; }
+  document.getElementById('vm-title').textContent = n.label||'Video';
+  document.getElementById('vs').src = n.videoFile;
+  document.getElementById('vp').load();
+  document.getElementById('vm').classList.remove('hidden');
+  document.getElementById('vp').play().catch(()=>{});
+}
+function closeVid() {
+  document.getElementById('vp').pause();
+  document.getElementById('vm').classList.add('hidden');
+  document.getElementById('vs').src = '';
+}
+document.getElementById('vm').addEventListener('click', e => {
+  if (e.target===document.getElementById('vm')) closeVid();
+});
+
+// ── File I/O ───────────────────────────────────────────────────────────────
+async function doSave() {
+  if (!window.showSaveFilePicker) { doExport(); return; } // fallback
+  try {
+    if (!fileHandle) {
+      fileHandle = await window.showSaveFilePicker({
+        suggestedName: 'grid-viewer.json',
+        types: [{ description: 'JSON file', accept: { 'application/json': ['.json'] } }],
+      });
+    }
+    await writeHandle(fileHandle);
+    showToast('Saved');
+  } catch(e) { if (e.name!=='AbortError') { showToast('Save failed'); console.error(e); } }
+}
+
+async function doLoad() {
+  if (!window.showOpenFilePicker) { legacyImport(); return; }
+  try {
+    const [h] = await window.showOpenFilePicker({
+      types: [{ description: 'JSON file', accept: { 'application/json': ['.json'] } }],
+    });
+    fileHandle = h;
+    const file = await h.getFile();
+    parseLoad(await file.text());
+  } catch(e) { if (e.name!=='AbortError') { showToast('Load failed'); console.error(e); } }
+}
+
+function viewState() {
+  return { zoomX, zoomY, CW, CH, nodeSize };
+}
+
+async function writeHandle(h) {
+  const w = await h.createWritable();
+  await w.write(JSON.stringify({ S, UID, view: viewState() }, null, 2));
+  await w.close();
+}
+
+async function autoSave() {
+  if (fileHandle) {
+    try { await writeHandle(fileHandle); } catch(e) {}
+  }
+  // Also keep localStorage as backup
+  try { localStorage.setItem('gv_bak', JSON.stringify({ S, UID, view: viewState() })); } catch(e) {}
+}
+
+function doExport() {
+  const blob = new Blob([JSON.stringify({S, UID, view: viewState()},null,2)], {type:'application/json'});
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: 'grid-viewer.json' });
+  a.click(); URL.revokeObjectURL(a.href);
+  showToast('Exported');
+}
+
+function legacyImport() {
+  const inp = Object.assign(document.createElement('input'), {type:'file',accept:'.json'});
+  inp.onchange = e => {
+    const r = new FileReader();
+    r.onload = ev => parseLoad(ev.target.result);
+    r.readAsText(e.target.files[0]);
+  };
+  inp.click();
+}
+
+function applyView(v) {
+  if (!v) return;
+  if (v.zoomX)    zoomX    = v.zoomX;
+  if (v.zoomY)    zoomY    = v.zoomY;
+  if (v.CW)       CW       = v.CW;
+  if (v.CH)       CH       = v.CH;
+  if (v.nodeSize) { nodeSize = v.nodeSize; NR = nodeSize / 2; }
+}
+
+function parseLoad(text) {
+  try {
+    const d = JSON.parse(text);
+    S = d.S; UID = d.UID || 1;
+    applyView(d.view);
+    syncViewUI(); sizeCanvas();
+    desel(); render(); showToast('Loaded');
+  } catch { showToast('Invalid file'); }
+}
+
+// Try loading from localStorage backup on startup
+function load() {
+  try {
+    const d = localStorage.getItem('gv_bak');
+    if (d) {
+      const p = JSON.parse(d);
+      S = p.S; UID = p.UID || 1;
+      applyView(p.view);
+    }
+  } catch(e) {}
+}
+
+function clearAll() {
+  if (!confirm('Clear everything?')) return;
+  S = {nodes:[],conns:[]}; UID = 1; fileHandle = null;
+  desel(); render(); autoSave();
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function g2p(col, row) { return { x: col*GS*zoomX, y: row*GS*zoomY }; }
+
+function mXY(e) {
+  const r = canvas.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+
+function mGrid(e) {
+  const { x, y } = mXY(e);
+  return {
+    col: Math.max(1, Math.min(CW-2, Math.round(x / (GS*zoomX)))),
+    row: Math.max(1, Math.min(CH-2, Math.round(y / (GS*zoomY)))),
+  };
+}
+
+function adj(hex, p) {
+  if (!hex?.startsWith('#')) return hex||'#888';
+  const cl = v => Math.max(0, Math.min(255, Math.round(v)));
+  const r = cl(parseInt(hex.slice(1,3),16) + p*2.55);
+  const g = cl(parseInt(hex.slice(3,5),16) + p*2.55);
+  const b = cl(parseInt(hex.slice(5,7),16) + p*2.55);
+  return `rgb(${r},${g},${b})`;
+}
+
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+let toastT;
+function showToast(msg) {
+  toast.textContent = msg; toast.classList.add('show');
+  clearTimeout(toastT); toastT = setTimeout(() => toast.classList.remove('show'), 2100);
+}
+
+// ── Sample data ────────────────────────────────────────────────────────────
+function loadSample() {
+  const ns = [
+    // Hub
+    {id:'h0', col:2,  row:16, label:'Overview',             icon:'⊕', color:'#a29bfe', shape:'circle', videoFile:'', notes:''},
+
+    // Trauma
+    {id:'tL', col:2,  row:3,  label:'Trauma',               icon:'', color:'#ff9f43', shape:'lbl',    videoFile:'', notes:''},
+    {id:'t1', col:4,  row:4,  label:'Intro to Trauma',      icon:'🧠', color:'#ff9f43', shape:'circle', videoFile:'videos/trauma-intro.mp4', notes:''},
+    {id:'t2', col:7,  row:3,  label:'Psychology of Trauma', icon:'📚', color:'#ff9f43', shape:'circle', videoFile:'videos/psych-trauma.mp4', notes:''},
+    {id:'t3', col:10, row:3,  label:'Trauma Responses',     icon:'⚡', color:'#ff9f43', shape:'circle', videoFile:'videos/trauma-responses.mp4', notes:''},
+    {id:'t4', col:13, row:3,  label:'Healing Trauma',       icon:'🌿', color:'#ff9f43', shape:'circle', videoFile:'videos/healing-trauma.mp4', notes:''},
+    {id:'t5', col:7,  row:5,  label:'Emotional Numbness',   icon:'❄️', color:'#e17055', shape:'circle', videoFile:'videos/emotional-numbness.mp4', notes:''},
+    {id:'t6', col:10, row:5,  label:'Trauma & Attachment',  icon:'🔗', color:'#e17055', shape:'circle', videoFile:'videos/trauma-attachment.mp4', notes:''},
+
+    // ADHD
+    {id:'aL', col:2,  row:9,  label:'ADHD',                 icon:'', color:'#fd79a8', shape:'lbl',    videoFile:'', notes:''},
+    {id:'a1', col:4,  row:9,  label:'What is ADHD?',        icon:'💡', color:'#fd79a8', shape:'circle', videoFile:'videos/what-is-adhd.mp4', notes:''},
+    {id:'a2', col:7,  row:8,  label:'ADHD & Focus',         icon:'🎯', color:'#fd79a8', shape:'circle', videoFile:'videos/adhd-focus.mp4', notes:''},
+    {id:'a3', col:10, row:8,  label:'ADHD & Emotions',      icon:'❤️', color:'#fd79a8', shape:'circle', videoFile:'videos/adhd-emotions.mp4', notes:''},
+    {id:'a4', col:13, row:8,  label:'ADHD Treatment',       icon:'💊', color:'#fd79a8', shape:'circle', videoFile:'videos/adhd-treatment.mp4', notes:''},
+    {id:'a5', col:7,  row:10, label:'Neuroscience of ADHD', icon:'🔬', color:'#e84393', shape:'circle', videoFile:'videos/adhd-neuro.mp4', notes:''},
+    {id:'a6', col:10, row:10, label:'ADHD & Depression',    icon:'☁️', color:'#e84393', shape:'circle', videoFile:'videos/adhd-depression.mp4', notes:''},
+
+    // Meditation
+    {id:'mL', col:2,  row:14, label:'Meditation',           icon:'', color:'#74b9ff', shape:'lbl',    videoFile:'', notes:''},
+    {id:'m1', col:4,  row:15, label:'What is Meditation?',  icon:'🧘', color:'#74b9ff', shape:'circle', videoFile:'videos/what-is-meditation.mp4', notes:''},
+    {id:'m2', col:7,  row:14, label:'History',              icon:'📜', color:'#74b9ff', shape:'circle', videoFile:'videos/history-meditation.mp4', notes:''},
+    {id:'m3', col:10, row:14, label:'Types of Meditation',  icon:'🌊', color:'#74b9ff', shape:'circle', videoFile:'videos/types-meditation.mp4', notes:''},
+    {id:'m4', col:13, row:14, label:'Science of Meditation',icon:'🔬', color:'#74b9ff', shape:'circle', videoFile:'videos/science-meditation.mp4', notes:''},
+    {id:'m5', col:7,  row:16, label:'Mindfulness',          icon:'🌙', color:'#0984e3', shape:'circle', videoFile:'videos/mindfulness.mp4', notes:''},
+    {id:'m6', col:10, row:16, label:'The Nature of Mind',   icon:'💎', color:'#0984e3', shape:'circle', videoFile:'videos/nature-of-mind.mp4', notes:''},
+    {id:'m7', col:13, row:16, label:'System of Mind',       icon:'⭐', color:'#0984e3', shape:'circle', videoFile:'videos/system-of-mind.mp4', notes:''},
+
+    // Depression
+    {id:'dL', col:2,  row:20, label:'Depression',           icon:'', color:'#00cec9', shape:'lbl',    videoFile:'', notes:''},
+    {id:'d1', col:4,  row:21, label:'What is Depression?',  icon:'☁️', color:'#00cec9', shape:'circle', videoFile:'videos/what-is-depression.mp4', notes:''},
+    {id:'d2', col:7,  row:20, label:'Cognitive Depression', icon:'🧩', color:'#00cec9', shape:'circle', videoFile:'videos/cognitive-depression.mp4', notes:''},
+    {id:'d3', col:10, row:20, label:'Chronic Depression',   icon:'📊', color:'#00cec9', shape:'circle', videoFile:'videos/depression-chronic.mp4', notes:''},
+    {id:'d4', col:13, row:20, label:'Treating Depression',  icon:'🌱', color:'#00cec9', shape:'circle', videoFile:'videos/treating-depression.mp4', notes:''},
+    {id:'d5', col:7,  row:22, label:'Negative Emotions',    icon:'🌀', color:'#55efc4', shape:'circle', videoFile:'videos/negative-emotions.mp4', notes:''},
+    {id:'d6', col:10, row:22, label:'Reframing Actions',    icon:'🔄', color:'#55efc4', shape:'circle', videoFile:'videos/reframing-actions.mp4', notes:''},
+
+    // Anxiety
+    {id:'xL', col:2,  row:26, label:'Anxiety',              icon:'', color:'#a29bfe', shape:'lbl',    videoFile:'', notes:''},
+    {id:'x1', col:4,  row:27, label:'What is Anxiety?',     icon:'😰', color:'#a29bfe', shape:'circle', videoFile:'videos/what-is-anxiety.mp4', notes:''},
+    {id:'x2', col:7,  row:26, label:'Physiologic Anxiety',  icon:'💓', color:'#a29bfe', shape:'circle', videoFile:'videos/physio-anxiety.mp4', notes:''},
+    {id:'x3', col:10, row:26, label:'Breath & Anxiety',     icon:'🌬️', color:'#a29bfe', shape:'circle', videoFile:'videos/breath-anxiety.mp4', notes:''},
+    {id:'x4', col:13, row:26, label:'Managing Anxiety',     icon:'🛡️', color:'#a29bfe', shape:'circle', videoFile:'videos/managing-anxiety.mp4', notes:''},
+    {id:'x5', col:7,  row:28, label:'Cognitive Anxiety',    icon:'🔍', color:'#6c5ce7', shape:'circle', videoFile:'videos/cognitive-anxiety.mp4', notes:''},
+    {id:'x6', col:10, row:28, label:'Treatment Approaches', icon:'💊', color:'#6c5ce7', shape:'circle', videoFile:'videos/anxiety-treatment.mp4', notes:''},
+  ];
+
+  const cs = [
+    // Hub → section starts
+    {id:'c_ht1', from:'h0', to:'t1', dashed:false, color:'#ff9f4388'},
+    {id:'c_ha1', from:'h0', to:'a1', dashed:false, color:'#fd79a888'},
+    {id:'c_hm1', from:'h0', to:'m1', dashed:false, color:'#74b9ff88'},
+    {id:'c_hd1', from:'h0', to:'d1', dashed:false, color:'#00cec988'},
+    {id:'c_hx1', from:'h0', to:'x1', dashed:false, color:'#a29bfe88'},
+    // Trauma
+    {id:'c_t12', from:'t1', to:'t2', dashed:false, color:'#ff9f4388'},
+    {id:'c_t23', from:'t2', to:'t3', dashed:false, color:'#ff9f4388'},
+    {id:'c_t34', from:'t3', to:'t4', dashed:false, color:'#ff9f4388'},
+    {id:'c_t15', from:'t1', to:'t5', dashed:false, color:'#e1705588'},
+    {id:'c_t56', from:'t5', to:'t6', dashed:false, color:'#e1705588'},
+    {id:'c_t25', from:'t2', to:'t5', dashed:true,  color:'rgba(255,180,80,0.35)'},
+    // ADHD
+    {id:'c_a12', from:'a1', to:'a2', dashed:false, color:'#fd79a888'},
+    {id:'c_a23', from:'a2', to:'a3', dashed:false, color:'#fd79a888'},
+    {id:'c_a34', from:'a3', to:'a4', dashed:false, color:'#fd79a888'},
+    {id:'c_a15', from:'a1', to:'a5', dashed:false, color:'#e8439388'},
+    {id:'c_a56', from:'a5', to:'a6', dashed:false, color:'#e8439388'},
+    // Meditation
+    {id:'c_m12', from:'m1', to:'m2', dashed:false, color:'#74b9ff88'},
+    {id:'c_m23', from:'m2', to:'m3', dashed:false, color:'#74b9ff88'},
+    {id:'c_m34', from:'m3', to:'m4', dashed:false, color:'#74b9ff88'},
+    {id:'c_m15', from:'m1', to:'m5', dashed:false, color:'#0984e388'},
+    {id:'c_m56', from:'m5', to:'m6', dashed:false, color:'#0984e388'},
+    {id:'c_m67', from:'m6', to:'m7', dashed:false, color:'#0984e388'},
+    // Depression
+    {id:'c_d12', from:'d1', to:'d2', dashed:false, color:'#00cec988'},
+    {id:'c_d23', from:'d2', to:'d3', dashed:false, color:'#00cec988'},
+    {id:'c_d34', from:'d3', to:'d4', dashed:false, color:'#00cec988'},
+    {id:'c_d15', from:'d1', to:'d5', dashed:false, color:'#55efc488'},
+    {id:'c_d56', from:'d5', to:'d6', dashed:false, color:'#55efc488'},
+    // Anxiety
+    {id:'c_x12', from:'x1', to:'x2', dashed:false, color:'#a29bfe88'},
+    {id:'c_x23', from:'x2', to:'x3', dashed:false, color:'#a29bfe88'},
+    {id:'c_x34', from:'x3', to:'x4', dashed:false, color:'#a29bfe88'},
+    {id:'c_x15', from:'x1', to:'x5', dashed:false, color:'#6c5ce788'},
+    {id:'c_x56', from:'x5', to:'x6', dashed:false, color:'#6c5ce788'},
+    // Cross-topic
+    {id:'c_xm',  from:'m4', to:'a6', dashed:true, color:'rgba(255,255,255,0.18)'},
+    {id:'c_xd',  from:'d4', to:'x4', dashed:true, color:'rgba(255,255,255,0.18)'},
+    {id:'c_ta',  from:'t4', to:'a4', dashed:true, color:'rgba(255,200,100,0.22)'},
+  ];
+
+  S.nodes = ns; S.conns = cs; UID = 200;
+}
+
+// ── Start ──────────────────────────────────────────────────────────────────
+boot();
+</script>
+</body>
+</html>
