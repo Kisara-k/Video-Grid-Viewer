@@ -345,11 +345,11 @@ body {
   <div id="canvas">
     <svg id="svg-layer" xmlns="http://www.w3.org/2000/svg">
       <defs>
-        <marker id="ah" markerWidth="9" markerHeight="6.5" refX="8.5" refY="3.25" orient="auto">
-          <polygon points="0 0, 9 3.25, 0 6.5" fill="rgba(255,255,255,0.68)"/>
+        <marker id="ah" markerWidth="9" markerHeight="6.5" refX="0" refY="3.25" orient="auto">
+          <polygon points="0 0, 9 3.25, 0 6.5" fill="context-stroke"/>
         </marker>
-        <marker id="ah2" markerWidth="9" markerHeight="6.5" refX="8.5" refY="3.25" orient="auto">
-          <polygon points="0 0, 9 3.25, 0 6.5" fill="rgba(255,255,255,0.3)"/>
+        <marker id="ah2" markerWidth="9" markerHeight="6.5" refX="0" refY="3.25" orient="auto">
+          <polygon points="0 0, 9 3.25, 0 6.5" fill="context-stroke"/>
         </marker>
       </defs>
       <g id="cg"></g>
@@ -816,17 +816,18 @@ function pathD(p1, p2) {
 
   const hd = dx >= 0 ? 1 : -1;  // horizontal direction (±1)
   const vd = dy >= 0 ? 1 : -1;  // vertical direction (±1)
+  const AR = 13.5; // arrowhead reach in px (markerWidth × strokeWidth)
 
   // ── Straight horizontal ──
   if (Math.abs(dy) < NR * 0.6) {
-    const sx = p1.x + hd * NR, ex = p2.x - hd * NR;
+    const sx = p1.x + hd * NR, ex = p2.x - hd * (NR + AR);
     if (Math.abs(ex - sx) < 2) return null;
     return `M ${f(sx)} ${f(p1.y)} H ${f(ex)}`;
   }
 
   // ── Straight vertical ──
   if (Math.abs(dx) < NR * 0.6) {
-    const sy = p1.y + vd * NR, ey = p2.y - vd * NR;
+    const sy = p1.y + vd * NR, ey = p2.y - vd * (NR + AR);
     if (Math.abs(ey - sy) < 2) return null;
     return `M ${f(p1.x)} ${f(sy)} V ${f(ey)}`;
   }
@@ -834,8 +835,8 @@ function pathD(p1, p2) {
   // ── L-shape: exit horizontally, elbow, vertical, elbow, enter horizontally ──
   // Source exits from the left or right edge of the circle
   const sx = p1.x + hd * NR;
-  // Target is entered from left or right
-  const ex = p2.x - hd * NR;
+  // Target is entered from left or right, leaving room for arrowhead
+  const ex = p2.x - hd * (NR + AR);
 
   // midX is halfway between sx and ex
   const midX = (sx + ex) * 0.5;
