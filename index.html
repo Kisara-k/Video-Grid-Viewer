@@ -365,7 +365,7 @@ body {
 <div id="tt" class="hidden">
   <div id="tt-head">
     <span id="tt-icon"></span>
-    <input id="tt-name" type="text" autocomplete="off" oninput="ttTitleInput()">
+    <input id="tt-name" type="text" autocomplete="off" oninput="ttTitleInput()" onfocus="sbFocus()">
   </div>
   <div id="tt-dur">⏱ <span id="tt-dur-v">—</span></div>
   <div id="tt-notes-lbl">Notes</div>
@@ -386,21 +386,21 @@ body {
   <!-- Single-node top fields -->
   <div id="sb-single-top">
     <h3>Node Properties</h3>
-    <div class="f"><label>Label</label><input id="pl" type="text" placeholder="Name" oninput="syncNode()"></div>
-    <div class="f"><label>Icon (emoji)</label><input id="pi" type="text" placeholder="🧠" maxlength="2" oninput="syncNode()"></div>
+    <div class="f"><label>Label</label><input id="pl" type="text" placeholder="Name" oninput="syncNode()" onfocus="sbFocus()"></div>
+    <div class="f"><label>Icon (emoji)</label><input id="pi" type="text" placeholder="🧠" maxlength="2" oninput="syncNode()" onfocus="sbFocus()"></div>
   </div>
   <!-- Shared color palette -->
   <div class="f"><label>Color</label><div class="cg" id="cg-pal"></div></div>
   <!-- Single-node bottom fields -->
   <div id="sb-single-bot">
     <div class="f"><label>Shape</label>
-      <select id="ps" onchange="syncNode()">
+      <select id="ps" onchange="syncNode()" onfocus="sbFocus()">
         <option value="circle">Circle</option>
         <option value="diamond">Diamond</option>
         <option value="lbl">Section Label</option>
       </select>
     </div>
-    <div class="f" id="vf"><label>Video File</label><input id="pv" type="text" placeholder="videos/file.mp4" oninput="syncNode()"></div>
+    <div class="f" id="vf"><label>Video File</label><input id="pv" type="text" placeholder="videos/file.mp4" oninput="syncNode()" onfocus="sbFocus()"></div>
     <div class="sbb">
       <button class="btn" onclick="playSelected()">▶ Play</button>
       <button class="btn red" onclick="delSelected()">✕ Delete</button>
@@ -440,6 +440,7 @@ body {
 <div id="help">
   <b>V</b> View &nbsp;<b>N</b> Node &nbsp;<b>C</b> Connect &nbsp;<b>D</b> Delete<br>
   <b>Drag</b> Pan &nbsp;<b>Shift+Drag</b> Lasso &nbsp;<b>Shift+Click</b> Multi-select<br>
+  <b>Ctrl+A</b> Select All &nbsp;<b>Ctrl+Z</b> Undo &nbsp;<b>Ctrl+Shift+Z</b> Redo<br>
   <b>Ctrl+Scroll</b> Zoom &nbsp;|&nbsp; Hover node → tooltip
 </div>
 
@@ -474,6 +475,56 @@ const HINTS = {
 // ── State ──────────────────────────────────────────────────────────────────
 let S = { nodes: [], conns: [] };
 let UID = 1;
+
+// ── Undo / Redo ───────────────────────────────────────────────────────────
+const undoStack = [];
+const redoStack = [];
+const MAX_UNDO  = 50;
+
+function _snapNotes() {
+  const m = {};
+  S.nodes.forEach(n => { m[n.id] = n.notes || ''; });
+  return m;
+}
+function _restoreNotes(m) {
+  S.nodes.forEach(n => { if (m[n.id] !== undefined) n.notes = m[n.id]; });
+}
+
+function pushUndo() {
+  const snap = JSON.parse(JSON.stringify({ S, UID }));
+  // Avoid duplicate consecutive entries
+  if (undoStack.length) {
+    const prev = undoStack[undoStack.length - 1];
+    if (JSON.stringify(prev) === JSON.stringify(snap)) return;
+  }
+  undoStack.push(snap);
+  if (undoStack.length > MAX_UNDO) undoStack.shift();
+  redoStack.length = 0;
+}
+
+// sbFocus — call when a sidebar/tooltip edit field gains focus to capture
+// the pre-edit state as an undo point
+function sbFocus() { pushUndo(); }
+
+function doUndo() {
+  if (!undoStack.length) { showToast('Nothing to undo'); return; }
+  const savedNotes = _snapNotes();
+  redoStack.push(JSON.parse(JSON.stringify({ S, UID })));
+  const snap = undoStack.pop();
+  S = snap.S; UID = snap.UID;
+  _restoreNotes(savedNotes);
+  desel(); render(); autoSave(); showToast('Undo');
+}
+
+function doRedo() {
+  if (!redoStack.length) { showToast('Nothing to redo'); return; }
+  const savedNotes = _snapNotes();
+  undoStack.push(JSON.parse(JSON.stringify({ S, UID })));
+  const snap = redoStack.pop();
+  S = snap.S; UID = snap.UID;
+  _restoreNotes(savedNotes);
+  desel(); render(); autoSave(); showToast('Redo');
+}
 const nid = () => 'n' + (UID++);
 const cid = () => 'c' + (UID++);
 
@@ -640,7 +691,7 @@ function setMode(m) {
   mode = m; connFrom = null;
   selIds.clear();
   tl.setAttribute('display', 'none');
-  ['bv','bn','bl','bc','bd'].forEach(id => document.getElementById(id).classList.remove('on'));
+  ['bv','bn','bl','bc','bd'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.remove('on'); });
   const map = { view:'bv', node:'bn', lbl:'bl', conn:'bc', del:'bd' };
   if (map[m]) document.getElementById(map[m]).classList.add('on');
   document.getElementById('hint').textContent = HINTS[m] || '';
@@ -869,6 +920,9 @@ function setupEv() {
   tt.addEventListener('mouseleave', () => { overTT = false; startHideTT(); });
   document.addEventListener('click', e => {
     if (!ctx.contains(e.target)) hideCtx();
+    if (!tt.classList.contains('hidden') && !tt.contains(e.target) && !e.target.closest('.node')) {
+      tt.classList.add('hidden');
+    }
   });
   document.addEventListener('keydown', e => { onKey(e); updateSelCursor(e); });
   document.addEventListener('keyup',   updateSelCursor);
@@ -995,6 +1049,7 @@ function onNDown(id, e) {
   const mv = me => {
     if (!moved && (Math.abs(me.clientX-sx)>5 || Math.abs(me.clientY-sy)>5)) {
       moved = true;
+      pushUndo();
       if (selIds.has(id) && selIds.size > 1) {
         // Group drag: anchor is the node under cursor
         const r = canvas.getBoundingClientRect();
@@ -1110,6 +1165,26 @@ function onKey(e) {
     if (selIds.size > 1) delMultiSelected();
     else if (selId) delSelected();
   }
+  // Ctrl+A — select all nodes
+  if (e.key==='a' && e.ctrlKey) {
+    e.preventDefault();
+    if (!S.nodes.length) return;
+    selId = null;
+    selIds = new Set(S.nodes.map(n => n.id));
+    if (selIds.size === 1) {
+      selId = [...selIds][0]; selIds.clear();
+      const n = S.nodes.find(n => n.id === selId);
+      if (n) openSB(n);
+    } else {
+      openMultiSB();
+    }
+    renderNodes();
+    return;
+  }
+  // Ctrl+Z — undo
+  if (e.key==='z' && e.ctrlKey && !e.shiftKey) { e.preventDefault(); doUndo(); return; }
+  // Ctrl+Shift+Z — redo
+  if (e.key==='z' && e.ctrlKey && e.shiftKey)  { e.preventDefault(); doRedo(); return; }
   const km = {v:'view', n:'node', c:'conn', d:'del', l:'lbl'};
   if (km[e.key] && !e.ctrlKey && !e.metaKey) setMode(km[e.key]);
 }
@@ -1149,9 +1224,14 @@ function posTT(e) {
   tt.style.left = x + 'px'; tt.style.top = y + 'px';
 }
 
+function _ttEditing() {
+  const el = document.activeElement;
+  return el && tt.contains(el) && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');
+}
+
 function startHideTT() {
   clearTimeout(ttHide);
-  ttHide = setTimeout(() => { if (!overNode && !overTT) tt.classList.add('hidden'); }, 180);
+  ttHide = setTimeout(() => { if (!overNode && !overTT && !_ttEditing()) tt.classList.add('hidden'); }, 180);
 }
 
 function ttTitleInput() {
@@ -1194,6 +1274,7 @@ function fmtDur(s) {
 // ── CRUD ───────────────────────────────────────────────────────────────────
 function addNode(col, row, isLbl) {
   if (S.nodes.find(n => n.col===col && n.row===row)) { showToast('Spot taken'); return; }
+  pushUndo();
   const n = {
     id: nid(), col, row,
     label: isLbl ? 'Section' : 'New Node',
@@ -1208,6 +1289,7 @@ function addNode(col, row, isLbl) {
 }
 
 function delNode(id) {
+  pushUndo();
   S.nodes = S.nodes.filter(n => n.id !== id);
   S.conns = S.conns.filter(c => c.from !== id && c.to !== id);
   if (selId === id) desel();
@@ -1218,12 +1300,14 @@ function delSelected() { if (selId) delNode(selId); }
 
 function addConn(from, to) {
   if (S.conns.find(c => c.from===from && c.to===to)) { showToast('Already connected'); return; }
+  pushUndo();
   const fn = S.nodes.find(n => n.id===from);
   S.conns.push({ id:cid(), from, to, dashed:false, label:'', color: fn ? fn.color+'88' : 'rgba(255,255,255,0.45)' });
   renderConns(); autoSave(); showToast('Connected');
 }
 
 function delConn(id) {
+  pushUndo();
   S.conns = S.conns.filter(c => c.id !== id);
   renderConns(); autoSave();
   if (selId) updConnList(selId);
@@ -1311,6 +1395,7 @@ function syncNode() {
 }
 
 function pickCol(c) {
+  pushUndo();
   if (selIds.size > 1) {
     selIds.forEach(id => {
       const n = S.nodes.find(n => n.id === id);
@@ -1333,6 +1418,7 @@ function pickCol(c) {
 
 function delMultiSelected() {
   if (!selIds.size) return;
+  pushUndo();
   selIds.forEach(id => {
     S.nodes = S.nodes.filter(n => n.id !== id);
     S.conns = S.conns.filter(c => c.from !== id && c.to !== id);
@@ -1343,6 +1429,7 @@ function delMultiSelected() {
 }
 
 function setDash(connId, v) {
+  pushUndo();
   const c = S.conns.find(c => c.id===connId);
   if (c) { c.dashed = v; renderConns(); autoSave(); }
 }
@@ -1469,6 +1556,7 @@ function parseLoad(text) {
   try {
     const d = JSON.parse(text);
     S = d.S; UID = d.UID || 1;
+    undoStack.length = 0; redoStack.length = 0;
     applyView(d.view);
     syncViewUI(); sizeCanvas();
     desel(); render(); showToast('Loaded');
@@ -1489,6 +1577,7 @@ function load() {
 
 function clearAll() {
   if (!confirm('Clear everything?')) return;
+  pushUndo();
   S = {nodes:[],conns:[]}; UID = 1; fileHandle = null;
   desel(); render(); autoSave();
 }
