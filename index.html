@@ -281,6 +281,8 @@ body {
   <button class="btn" onclick="doSave()">💾 Save</button>
   <button class="btn" onclick="doLoad()">📂 Load</button>
   <button class="btn" onclick="doExport()">↑ Export</button>
+  <button class="btn" onclick="generateMissingNodes()">⬇ Generate Nodes</button>
+  <button class="btn" id="folder-lbl" title="Change videos folder" onclick="changeVideoDir()">📁 Not set</button>
   <button class="btn red" onclick="clearAll()">Clear</button>
   <div class="tsep"></div>
   <span id="hint">Click nodes to play videos</span>
@@ -448,6 +450,7 @@ function boot() {
   if (!S.nodes.length) loadSample();
   render();
   setupEv();
+  _initFolderLabel();
   cw.scrollLeft = (GS * CW * zoomX - cw.clientWidth)  / 2;
   cw.scrollTop  = (GS * CH * zoomY - cw.clientHeight) / 3;
 }
@@ -1035,7 +1038,16 @@ function syncNode() {
   if (!n) return;
   n.label     = document.getElementById('pl').value;
   n.icon      = document.getElementById('pi').value || '●';
-  n.videoFile = document.getElementById('pv').value;
+  const newVideo = document.getElementById('pv').value;
+  // Enforce uniqueness: one video path may only be linked to one node
+  if (newVideo && newVideo !== n.videoFile) {
+    const existing = S.nodes.find(o => o.id !== selId && o.videoFile === newVideo);
+    if (existing) {
+      existing.videoFile = '';
+      showToast(`Unlinked "${existing.label}" — video reassigned`);
+    }
+  }
+  n.videoFile = newVideo;
   n.shape     = document.getElementById('ps').value;
   document.getElementById('vf').style.display = n.shape === 'lbl' ? 'none' : '';
   render(); autoSave();
@@ -1200,6 +1212,142 @@ function clearAll() {
   if (!confirm('Clear everything?')) return;
   S = {nodes:[],conns:[]}; UID = 1; fileHandle = null;
   desel(); render(); autoSave();
+}
+
+// ── Persisted videos-folder handle (IndexedDB) ────────────────────────────
+const _IDB_NAME = 'gv_store', _IDB_VER = 1, _IDB_STORE = 'handles';
+
+function _openDB() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open(_IDB_NAME, _IDB_VER);
+    req.onupgradeneeded = e => e.target.result.createObjectStore(_IDB_STORE);
+    req.onsuccess = e => res(e.target.result);
+    req.onerror   = e => rej(e.target.error);
+  });
+}
+async function _saveHandle(h) {
+  const db = await _openDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(_IDB_STORE, 'readwrite');
+    tx.objectStore(_IDB_STORE).put(h, 'videoDir');
+    tx.oncomplete = res; tx.onerror = e => rej(e.target.error);
+  });
+}
+async function _loadHandle() {
+  const db = await _openDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(_IDB_STORE, 'readonly');
+    const req = tx.objectStore(_IDB_STORE).get('videoDir');
+    req.onsuccess = e => res(e.target.result || null);
+    req.onerror   = e => rej(e.target.error);
+  });
+}
+
+function _setFolderLabel(name) {
+  const el = document.getElementById('folder-lbl');
+  if (el) el.textContent = name ? `📁 ${name}` : '📁 Not set';
+}
+
+async function _initFolderLabel() {
+  const h = await _loadHandle().catch(() => null);
+  _setFolderLabel(h ? h.name : null);
+}
+
+// Returns a directory handle, reusing the stored one.
+// Pass forceNew=true to always show the picker (for "change folder").
+async function _getVideoDir(forceNew) {
+  if (!window.showDirectoryPicker) { showToast('Not supported in this browser'); return null; }
+  let handle = forceNew ? null : await _loadHandle().catch(() => null);
+  if (handle) {
+    const perm = await handle.queryPermission({ mode: 'read' });
+    if (perm !== 'granted') {
+      const req = await handle.requestPermission({ mode: 'read' });
+      if (req !== 'granted') handle = null;
+    }
+  }
+  if (!handle) {
+    try {
+      handle = await window.showDirectoryPicker({ mode: 'read' });
+      await _saveHandle(handle);
+    } catch(e) {
+      if (e.name !== 'AbortError') showToast('Could not open folder');
+      return null;
+    }
+  }
+  _setFolderLabel(handle.name);
+  return handle;
+}
+
+async function changeVideoDir() {
+  await _getVideoDir(true);
+}
+
+// ── Generate nodes for unlinked videos ────────────────────────────────────
+async function generateMissingNodes() {
+  const dirHandle = await _getVideoDir(false);
+  if (!dirHandle) return;
+
+  const videoExts = new Set(['.mp4', '.mkv', '.webm', '.mov', '.avi', '.m4v', '.wmv']);
+  const found = [];
+
+  async function collectFiles(handle, relPath) {
+    for await (const [name, entry] of handle.entries()) {
+      const entryPath = relPath ? `${relPath}/${name}` : name;
+      if (entry.kind === 'file') {
+        const dot = name.lastIndexOf('.');
+        const ext = dot >= 0 ? name.slice(dot).toLowerCase() : '';
+        if (videoExts.has(ext)) found.push(entryPath);
+      } else if (entry.kind === 'directory') {
+        await collectFiles(entry, entryPath);
+      }
+    }
+  }
+
+  try {
+    await collectFiles(dirHandle, '');
+  } catch(e) { showToast('Error reading folder'); console.error(e); return; }
+
+  const dirName = dirHandle.name;
+  const existingPaths = new Set(S.nodes.filter(n => n.videoFile).map(n => n.videoFile));
+
+  let added = 0;
+  for (const relPath of found) {
+    const fullPath = `${dirName}/${relPath}`;
+    if (existingPaths.has(fullPath)) continue;
+
+    const spot = findFreeSpot();
+    if (!spot) break;
+
+    const fname = relPath.includes('/') ? relPath.slice(relPath.lastIndexOf('/') + 1) : relPath;
+    const title = fname.lastIndexOf('.') >= 0 ? fname.slice(0, fname.lastIndexOf('.')) : fname;
+
+    S.nodes.push({
+      id: nid(), col: spot.col, row: spot.row,
+      label: title,
+      icon: '▶',
+      color: PAL[Math.floor(Math.random() * PAL.length)],
+      shape: 'circle',
+      videoFile: fullPath,
+      notes: '',
+    });
+    added++;
+  }
+
+  if (added > 0) {
+    render(); autoSave(); showToast(`Added ${added} node${added > 1 ? 's' : ''}`);
+  } else {
+    showToast('No new videos to add');
+  }
+}
+
+function findFreeSpot() {
+  const used = new Set(S.nodes.map(n => `${n.col},${n.row}`));
+  for (let row = 2; row < CH - 1; row++) {
+    for (let col = 2; col < CW - 1; col++) {
+      if (!used.has(`${col},${row}`)) return { col, row };
+    }
+  }
+  return null;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
