@@ -173,7 +173,13 @@ body {
 #tt.hidden { display: none; }
 #tt-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 #tt-icon { font-size: 18px; line-height: 1; }
-#tt-name { font-size: 12px; font-weight: 600; color: #fff; flex: 1; }
+#tt-name {
+  font-size: 12px; font-weight: 600; color: #fff; flex: 1;
+  background: transparent; border: none; outline: none;
+  border-bottom: 1px solid transparent; font-family: inherit;
+  padding: 0; cursor: text;
+}
+#tt-name:focus { border-bottom-color: rgba(74,143,217,0.4); }
 #tt-dur  { font-size: 10px; color: var(--dim); margin-bottom: 7px; }
 #tt-dur span { color: var(--acc); }
 #tt-notes-lbl { font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); margin-bottom: 4px; }
@@ -360,7 +366,7 @@ body {
 <div id="tt" class="hidden">
   <div id="tt-head">
     <span id="tt-icon"></span>
-    <span id="tt-name"></span>
+    <input id="tt-name" type="text" autocomplete="off" oninput="ttTitleInput()">
   </div>
   <div id="tt-dur">⏱ <span id="tt-dur-v">—</span></div>
   <div id="tt-notes-lbl">Notes</div>
@@ -1068,6 +1074,7 @@ function onNEnter(id, e) {
   overNode = true;
   clearTimeout(ttHide);
   ttNodeId = id;
+  if (mode !== 'view') return;
   const n = S.nodes.find(n => n.id === id);
   if (!n || n.shape === 'lbl') return;
   showTT(n, e);
@@ -1104,7 +1111,7 @@ function onKey(e) {
 // ── Tooltip ────────────────────────────────────────────────────────────────
 function showTT(n, e) {
   document.getElementById('tt-icon').textContent = n.icon || '●';
-  document.getElementById('tt-name').textContent = n.label || '';
+  document.getElementById('tt-name').value = n.label || '';
   document.getElementById('tt-notes').value = n.notes || '';
   document.getElementById('tt-dur-v').textContent = '—';
 
@@ -1139,6 +1146,15 @@ function posTT(e) {
 function startHideTT() {
   clearTimeout(ttHide);
   ttHide = setTimeout(() => { if (!overNode && !overTT) tt.classList.add('hidden'); }, 180);
+}
+
+function ttTitleInput() {
+  const n = S.nodes.find(n => n.id === ttNodeId);
+  if (!n) return;
+  n.label = document.getElementById('tt-name').value;
+  // Sync sidebar if this node is currently selected there
+  if (selId === n.id) document.getElementById('pl').value = n.label;
+  renderNodes(); autoSave();
 }
 
 function ttNotesInput() {
