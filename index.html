@@ -398,8 +398,8 @@ body {
 <div id="toast"></div>
 <div id="help">
   <b>V</b> View &nbsp;<b>N</b> Node &nbsp;<b>C</b> Connect &nbsp;<b>D</b> Delete<br>
-  <b>Drag</b> Move &nbsp;<b>Shift+Click</b> Multi-select &nbsp;<b>Drag canvas</b> Lasso<br>
-  Hover node → tooltip &nbsp;|&nbsp; X/Y sliders → zoom
+  <b>Drag</b> Pan &nbsp;<b>Shift+Drag</b> Lasso &nbsp;<b>Shift+Click</b> Multi-select<br>
+  <b>Ctrl+Scroll</b> Zoom &nbsp;|&nbsp; Hover node → tooltip
 </div>
 
 <!-- Hidden video probe for duration -->
@@ -443,6 +443,7 @@ let connFrom  = null;
 let drag      = null;        // { id }  — single-node drag
 let groupDrag = null;        // { startCol, startRow, origins:{id:{col,row}} }
 let lasso     = null;        // { x0,y0,x1,y1 } in canvas px
+let pan       = null;        // { startSL, startST, startX, startY, moved }
 let _skipNextCvClick = false;
 let ctxTgt   = null;
 let ttNodeId = null;
@@ -547,6 +548,25 @@ function setZoom(axis, v) {
   autoSave();
 }
 
+function onCvWheel(e) {
+  if (!e.ctrlKey) return;
+  e.preventDefault();
+  const k = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+  const oldX = zoomX, oldY = zoomY;
+  zoomX = Math.max(0.25, Math.min(4, zoomX * k));
+  zoomY = Math.max(0.25, Math.min(4, zoomY * k));
+  const kx = zoomX / oldX, ky = zoomY / oldY;
+  // Keep canvas point under cursor stationary
+  const cwRect = cw.getBoundingClientRect();
+  const cx = e.clientX - cwRect.left;
+  const cy = e.clientY - cwRect.top;
+  const sl = cw.scrollLeft, st = cw.scrollTop;
+  sizeCanvas(); render();
+  cw.scrollLeft = (sl + cx) * kx - cx;
+  cw.scrollTop  = (st + cy) * ky - cy;
+  syncViewUI(); autoSave();
+}
+
 // ── Grid dimensions ─────────────────────────────────────────────────────────
 function setGrid() {
   const nc = Math.max(10, Math.min(300, parseInt(document.getElementById('gcols').value) || CW));
@@ -578,7 +598,7 @@ function setMode(m) {
   const map = { view:'bv', node:'bn', lbl:'bl', conn:'bc', del:'bd' };
   if (map[m]) document.getElementById(map[m]).classList.add('on');
   document.getElementById('hint').textContent = HINTS[m] || '';
-  canvas.style.cursor = (m === 'node' || m === 'lbl') ? 'crosshair' : 'default';
+  canvas.style.cursor = (m === 'node' || m === 'lbl') ? 'crosshair' : (m === 'view' ? 'grab' : 'default');
   if (m !== 'node' && m !== 'lbl') ghost.style.display = 'none';
   renderNodes();
 }
@@ -795,6 +815,7 @@ function setupEv() {
   canvas.addEventListener('mousemove',   onCvMove);
   canvas.addEventListener('mouseup',     onCvUp);
   canvas.addEventListener('contextmenu', e => { e.preventDefault(); hideCtx(); });
+  cw.addEventListener('wheel', onCvWheel, { passive: false });
   tt.addEventListener('mouseenter', () => { overTT = true; clearTimeout(ttHide); });
   tt.addEventListener('mouseleave', () => { overTT = false; startHideTT(); });
   document.addEventListener('click', e => {
@@ -807,10 +828,34 @@ function onCvDown(e) {
   if (e.button !== 0) return;
   if (e.target.closest('.node')) return;
   if (mode !== 'view') return;
-  const { x, y } = mXY(e);
-  lasso = { x0: x, y0: y, x1: x, y1: y };
-  document.getElementById('sel-rect').style.display = 'block';
-  updateLassoRect();
+
+  if (e.shiftKey) {
+    // Shift+drag → lasso selection
+    const { x, y } = mXY(e);
+    lasso = { x0: x, y0: y, x1: x, y1: y };
+    document.getElementById('sel-rect').style.display = 'block';
+    updateLassoRect();
+  } else {
+    // Plain drag → pan viewport
+    pan = { startSL: cw.scrollLeft, startST: cw.scrollTop, startX: e.clientX, startY: e.clientY, moved: false };
+    canvas.style.cursor = 'grabbing';
+    const mv = me => {
+      const dx = me.clientX - pan.startX;
+      const dy = me.clientY - pan.startY;
+      if (!pan.moved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) pan.moved = true;
+      cw.scrollLeft = pan.startSL - dx;
+      cw.scrollTop  = pan.startST - dy;
+    };
+    const up = () => {
+      if (pan && pan.moved) _skipNextCvClick = true;
+      pan = null;
+      canvas.style.cursor = 'grab';
+      document.removeEventListener('mousemove', mv);
+      document.removeEventListener('mouseup', up);
+    };
+    document.addEventListener('mousemove', mv);
+    document.addEventListener('mouseup', up);
+  }
 }
 
 function onCvClick(e) {
