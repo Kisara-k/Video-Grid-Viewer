@@ -1273,7 +1273,7 @@ function fmtDur(s) {
 
 // ── CRUD ───────────────────────────────────────────────────────────────────
 function addNode(col, row, isLbl) {
-  if (S.nodes.find(n => n.col===col && n.row===row)) { showToast('Spot taken'); return; }
+  if (S.nodes.find(n => n.col===col && n.row===row)) return;
   pushUndo();
   const n = {
     id: nid(), col, row,
