@@ -56,6 +56,32 @@ body {
 }
 .zgroup input[type=number]::-webkit-inner-spin-button { opacity: 0.5; }
 .zgroup input[type=number]:focus { border-color: var(--acc); }
+.num-ctrl {
+  display: flex; align-items: stretch;
+  background: rgba(255,255,255,0.04); border: 1px solid rgba(74,143,217,0.25);
+  border-radius: 4px; overflow: hidden; transition: border-color 0.13s;
+}
+.num-ctrl:focus-within { border-color: var(--acc); }
+.num-ctrl input[type=number] {
+  background: none; border: none; width: 38px;
+  padding: 3px 5px; text-align: center;
+  color: var(--text); font-size: 11px; font-family: inherit;
+  -moz-appearance: textfield; appearance: textfield; outline: none;
+}
+.num-ctrl input[type=number]::-webkit-inner-spin-button,
+.num-ctrl input[type=number]::-webkit-outer-spin-button { display: none; }
+.num-arrows {
+  display: flex; flex-direction: column;
+  border-left: 1px solid rgba(74,143,217,0.2);
+}
+.num-arrows button {
+  background: none; border: none; color: var(--acc);
+  font-size: 7px; line-height: 1; padding: 2px 5px;
+  cursor: pointer; flex: 1; display: flex; align-items: center; justify-content: center;
+  transition: background 0.12s;
+}
+.num-arrows button:hover { background: rgba(74,143,217,0.25); }
+.num-arrows button:active { background: rgba(74,143,217,0.4); }
 .zgroup span { font-size: 10px; color: var(--text); width: 32px; text-align: right; }
 
 /* ── Canvas ─────────────────────────────────────────────────────────────── */
@@ -273,13 +299,23 @@ body {
   <div class="tsep"></div>
   <div class="zgroup">
     <label>Cols</label>
-    <input type="number" id="gcols" min="10" max="300" value="52"
-           style="width:44px;padding:3px 5px;text-align:center" onchange="setGrid()">
+    <div class="num-ctrl">
+      <input type="number" id="gcols" min="10" max="300" value="52" onchange="setGrid()">
+      <div class="num-arrows">
+        <button onclick="stepInput('gcols',1)">▲</button>
+        <button onclick="stepInput('gcols',-1)">▼</button>
+      </div>
+    </div>
   </div>
   <div class="zgroup">
     <label>Rows</label>
-    <input type="number" id="grows" min="5" max="200" value="34"
-           style="width:44px;padding:3px 5px;text-align:center" onchange="setGrid()">
+    <div class="num-ctrl">
+      <input type="number" id="grows" min="5" max="200" value="34" onchange="setGrid()">
+      <div class="num-arrows">
+        <button onclick="stepInput('grows',1)">▲</button>
+        <button onclick="stepInput('grows',-1)">▼</button>
+      </div>
+    </div>
   </div>
   <div class="tsep"></div>
   <div class="zgroup">
@@ -568,6 +604,11 @@ function onCvWheel(e) {
 }
 
 // ── Grid dimensions ─────────────────────────────────────────────────────────
+function stepInput(id, delta) {
+  const el = document.getElementById(id);
+  el.value = Math.max(+el.min, Math.min(+el.max, +el.value + delta));
+  el.dispatchEvent(new Event('change'));
+}
 function setGrid() {
   const nc = Math.max(10, Math.min(300, parseInt(document.getElementById('gcols').value) || CW));
   const nr = Math.max(5,  Math.min(200, parseInt(document.getElementById('grows').value) || CH));
