@@ -939,11 +939,15 @@ function ttPlay() {
 }
 
 function probeDur(src, cb) {
-  const vp = document.getElementById('vprobe');
+  const vp = document.createElement('video');
+  vp.preload = 'metadata';
+  vp.muted = true;
+  vp.style.display = 'none';
+  document.body.appendChild(vp);
+  const cleanup = () => { try { document.body.removeChild(vp); } catch(_) {} };
+  vp.onloadedmetadata = () => { const d = isFinite(vp.duration) ? vp.duration : null; cleanup(); cb(d); };
+  vp.onerror = () => { cleanup(); cb(null); };
   vp.src = src;
-  const done = () => { cb(isFinite(vp.duration) ? vp.duration : null); vp.src = ''; };
-  vp.onloadedmetadata = done;
-  vp.onerror = () => { cb(null); vp.src = ''; };
 }
 
 function fmtDur(s) {
