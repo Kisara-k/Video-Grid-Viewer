@@ -1099,7 +1099,7 @@ function onCCtx(id, e) {
 function onKey(e) {
   const t = document.activeElement.tagName;
   if (t==='INPUT'||t==='TEXTAREA'||t==='SELECT') return;
-  if (e.key==='Escape') { setMode('view'); desel(); }
+  if (e.key==='Escape') { desel(); }
   if (e.key==='Delete'||e.key==='Backspace') {
     if (selIds.size > 1) delMultiSelected();
     else if (selId) delSelected();
@@ -1632,7 +1632,7 @@ function finalizeLasso() {
   const newSel = new Set();
   S.nodes.forEach(n => {
     const { x, y } = g2p(n.col, n.row);
-    if (x >= x0 && x <= x1 && y >= y0 && y <= y1) newSel.add(n.id);
+    if (x - NR < x1 && x + NR > x0 && y - NR < y1 && y + NR > y0) newSel.add(n.id);
   });
   if (newSel.size === 0) return;
   if (newSel.size === 1) {
