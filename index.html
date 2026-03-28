@@ -106,6 +106,7 @@ body {
 }
 .node:hover .nb { transform: scale(1.12); }
 .node.sel .nb   { border-color: rgba(255,255,255,0.85) !important; outline: 2px solid rgba(255,255,255,0.3); outline-offset: 2px; }
+.node.msel .nb  { border-color: rgba(255,220,60,0.9) !important; outline: 2px solid rgba(255,220,60,0.38); outline-offset: 2px; }
 .node.csrc .nb  { animation: pulse 0.85s ease-in-out infinite; }
 @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.16); } }
 
@@ -114,6 +115,15 @@ body {
 .node.diamond .ni { transform: rotate(-45deg); }
 .node.diamond:hover .nb { transform: rotate(45deg) scale(1.1); }
 .node.diamond.sel .nb { transform: rotate(45deg); }
+.node.diamond.msel .nb { transform: rotate(45deg); }
+
+/* lasso selection rect */
+#sel-rect {
+  position: absolute; pointer-events: none; z-index: 6;
+  border: 1.5px dashed rgba(74,143,217,0.85);
+  background: rgba(74,143,217,0.09);
+  display: none;
+}
 
 /* label-only — all sizing handled inline by JS */
 .node.lbl .nb { display: none; }
@@ -305,6 +315,7 @@ body {
     </svg>
     <div id="nl">
       <div id="ghost"></div>
+      <div id="sel-rect"></div>
     </div>
   </div>
 </div>
@@ -323,26 +334,41 @@ body {
 
 <!-- Sidebar -->
 <div id="sb">
-  <h3>Node Properties</h3>
-  <div class="f"><label>Label</label><input id="pl" type="text" placeholder="Name" oninput="syncNode()"></div>
-  <div class="f"><label>Icon (emoji)</label><input id="pi" type="text" placeholder="🧠" maxlength="2" oninput="syncNode()"></div>
+  <!-- Multi-select header (shown when >1 nodes selected) -->
+  <div id="sb-multi-hdr" style="display:none">
+    <h3 id="sb-multi-cnt">0 Nodes Selected</h3>
+    <div class="sbb" style="margin-bottom:10px">
+      <button class="btn red" onclick="delMultiSelected()">✕ Delete All</button>
+    </div>
+    <div style="margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--bord)"></div>
+  </div>
+  <!-- Single-node top fields -->
+  <div id="sb-single-top">
+    <h3>Node Properties</h3>
+    <div class="f"><label>Label</label><input id="pl" type="text" placeholder="Name" oninput="syncNode()"></div>
+    <div class="f"><label>Icon (emoji)</label><input id="pi" type="text" placeholder="🧠" maxlength="2" oninput="syncNode()"></div>
+  </div>
+  <!-- Shared color palette -->
   <div class="f"><label>Color</label><div class="cg" id="cg-pal"></div></div>
-  <div class="f"><label>Shape</label>
-    <select id="ps" onchange="syncNode()">
-      <option value="circle">Circle</option>
-      <option value="diamond">Diamond</option>
-      <option value="lbl">Section Label</option>
-    </select>
-  </div>
-  <div class="f" id="vf"><label>Video File</label><input id="pv" type="text" placeholder="videos/file.mp4" oninput="syncNode()"></div>
-  <div class="sbb">
-    <button class="btn" onclick="playSelected()">▶ Play</button>
-    <button class="btn red" onclick="delSelected()">✕ Delete</button>
-  </div>
-  <div style="margin-top:16px;padding-top:13px;border-top:1px solid var(--bord)">
-    <h3>Connections</h3>
-    <div id="cl" style="color:var(--dim);font-size:10px;"></div>
-    <button class="btn" style="margin-top:7px;width:100%" onclick="startConn()">→ Add Connection</button>
+  <!-- Single-node bottom fields -->
+  <div id="sb-single-bot">
+    <div class="f"><label>Shape</label>
+      <select id="ps" onchange="syncNode()">
+        <option value="circle">Circle</option>
+        <option value="diamond">Diamond</option>
+        <option value="lbl">Section Label</option>
+      </select>
+    </div>
+    <div class="f" id="vf"><label>Video File</label><input id="pv" type="text" placeholder="videos/file.mp4" oninput="syncNode()"></div>
+    <div class="sbb">
+      <button class="btn" onclick="playSelected()">▶ Play</button>
+      <button class="btn red" onclick="delSelected()">✕ Delete</button>
+    </div>
+    <div style="margin-top:16px;padding-top:13px;border-top:1px solid var(--bord)">
+      <h3>Connections</h3>
+      <div id="cl" style="color:var(--dim);font-size:10px;"></div>
+      <button class="btn" style="margin-top:7px;width:100%" onclick="startConn()">→ Add Connection</button>
+    </div>
   </div>
 </div>
 
@@ -372,7 +398,7 @@ body {
 <div id="toast"></div>
 <div id="help">
   <b>V</b> View &nbsp;<b>N</b> Node &nbsp;<b>C</b> Connect &nbsp;<b>D</b> Delete<br>
-  <b>Drag</b> Move &nbsp;<b>Esc</b> Cancel &nbsp;<b>Right-click</b> Menu<br>
+  <b>Drag</b> Move &nbsp;<b>Shift+Click</b> Multi-select &nbsp;<b>Drag canvas</b> Lasso<br>
   Hover node → tooltip &nbsp;|&nbsp; X/Y sliders → zoom
 </div>
 
@@ -410,10 +436,14 @@ let UID = 1;
 const nid = () => 'n' + (UID++);
 const cid = () => 'c' + (UID++);
 
-let mode     = 'view';
-let selId    = null;
-let connFrom = null;
-let drag     = null;   // { id }
+let mode      = 'view';
+let selId     = null;
+let selIds    = new Set();   // multi-selection
+let connFrom  = null;
+let drag      = null;        // { id }  — single-node drag
+let groupDrag = null;        // { startCol, startRow, origins:{id:{col,row}} }
+let lasso     = null;        // { x0,y0,x1,y1 } in canvas px
+let _skipNextCvClick = false;
 let ctxTgt   = null;
 let ttNodeId = null;
 let overTT   = false;
@@ -542,6 +572,7 @@ function setNodeSize(v) {
 // ── Mode ───────────────────────────────────────────────────────────────────
 function setMode(m) {
   mode = m; connFrom = null;
+  selIds.clear();
   tl.setAttribute('display', 'none');
   ['bv','bn','bl','bc','bd'].forEach(id => document.getElementById(id).classList.remove('on'));
   const map = { view:'bv', node:'bn', lbl:'bl', conn:'bc', del:'bd' };
@@ -591,6 +622,7 @@ function applyNode(el, n) {
     + (n.shape === 'diamond' ? ' diamond' : '')
     + (n.shape === 'lbl'     ? ' lbl'     : '')
     + (selId === n.id        ? ' sel'     : '')
+    + (selIds.has(n.id)      ? ' msel'    : '')
     + (connFrom === n.id     ? ' csrc'    : '');
 
   const ball = el.querySelector('.nb');
@@ -758,6 +790,7 @@ const f = v => Math.round(v * 10) / 10; // round to 1 decimal
 
 // ── Events ─────────────────────────────────────────────────────────────────
 function setupEv() {
+  canvas.addEventListener('mousedown',   onCvDown);
   canvas.addEventListener('click',       onCvClick);
   canvas.addEventListener('mousemove',   onCvMove);
   canvas.addEventListener('mouseup',     onCvUp);
@@ -770,9 +803,20 @@ function setupEv() {
   document.addEventListener('keydown', onKey);
 }
 
+function onCvDown(e) {
+  if (e.button !== 0) return;
+  if (e.target.closest('.node')) return;
+  if (mode !== 'view') return;
+  const { x, y } = mXY(e);
+  lasso = { x0: x, y0: y, x1: x, y1: y };
+  document.getElementById('sel-rect').style.display = 'block';
+  updateLassoRect();
+}
+
 function onCvClick(e) {
   if (e.target.closest('.node')) return;
-  if (drag) return;
+  if (drag || groupDrag) return;
+  if (_skipNextCvClick) { _skipNextCvClick = false; return; }
   if (mode === 'node' || mode === 'lbl') {
     const { col, row } = mGrid(e);
     addNode(col, row, mode === 'lbl');
@@ -788,12 +832,35 @@ function onCvMove(e) {
     ghost.style.left = x + 'px'; ghost.style.top = y + 'px'; ghost.style.display = 'block';
   } else { ghost.style.display = 'none'; }
 
+  if (groupDrag) {
+    const { x, y } = mXY(e);
+    const col = Math.round(x / (GS * zoomX));
+    const row = Math.round(y / (GS * zoomY));
+    const dcol = col - groupDrag.startCol;
+    const drow = row - groupDrag.startRow;
+    Object.entries(groupDrag.origins).forEach(([sid, orig]) => {
+      const n = S.nodes.find(n => n.id === sid);
+      if (n) {
+        n.col = Math.max(1, Math.min(CW - 2, orig.col + dcol));
+        n.row = Math.max(1, Math.min(CH - 2, orig.row + drow));
+      }
+    });
+    render();
+    return;
+  }
+
   if (drag) {
     const { x, y } = mXY(e);
     const col = Math.max(1, Math.min(CW-2, Math.round(x / (GS*zoomX))));
     const row = Math.max(1, Math.min(CH-2, Math.round(y / (GS*zoomY))));
     const n = S.nodes.find(n => n.id === drag.id);
     if (n) { n.col = col; n.row = row; render(); }
+  }
+
+  if (lasso) {
+    const { x, y } = mXY(e);
+    lasso.x1 = x; lasso.y1 = y;
+    updateLassoRect();
   }
 
   if (mode === 'conn' && connFrom) {
@@ -809,17 +876,35 @@ function onCvMove(e) {
 }
 
 function onCvUp() {
+  if (groupDrag) { groupDrag = null; autoSave(); }
   if (drag) { drag = null; autoSave(); }
+  if (lasso) { finalizeLasso(); }
 }
 
 function onNDown(id, e) {
   if (e.button !== 0) return;
   e.stopPropagation();
+  if (e.shiftKey) return; // shift-click handled entirely in onNClick
   const sx = e.clientX, sy = e.clientY;
   let moved = false;
   const mv = me => {
     if (!moved && (Math.abs(me.clientX-sx)>5 || Math.abs(me.clientY-sy)>5)) {
-      moved = true; drag = { id };
+      moved = true;
+      if (selIds.has(id) && selIds.size > 1) {
+        // Group drag: anchor is the node under cursor
+        const r = canvas.getBoundingClientRect();
+        const cx = sx - r.left, cy = sy - r.top;
+        const startCol = Math.round(cx / (GS * zoomX));
+        const startRow = Math.round(cy / (GS * zoomY));
+        const origins = {};
+        selIds.forEach(sid => {
+          const n = S.nodes.find(n => n.id === sid);
+          if (n) origins[sid] = { col: n.col, row: n.row };
+        });
+        groupDrag = { startCol, startRow, origins };
+      } else {
+        drag = { id };
+      }
     }
   };
   const up = () => { document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up); };
@@ -829,9 +914,34 @@ function onNDown(id, e) {
 
 function onNClick(id, e) {
   e.stopPropagation();
-  if (drag) return;
+  if (drag || groupDrag) return;
   const n = S.nodes.find(n => n.id === id);
   if (!n) return;
+
+  // Shift-click: toggle multi-selection (view mode only)
+  if (e.shiftKey && mode === 'view') {
+    if (selIds.has(id)) {
+      selIds.delete(id);
+    } else {
+      selIds.add(id);
+      selId = null;
+    }
+    if (selIds.size > 1) {
+      openMultiSB();
+    } else if (selIds.size === 1) {
+      const lastId = [...selIds][0];
+      selIds.clear();
+      const ln = S.nodes.find(n => n.id === lastId);
+      if (ln) { selId = lastId; openSB(ln); } else desel();
+    } else {
+      desel();
+    }
+    renderNodes();
+    return;
+  }
+
+  // Plain click while multi-selection is active → dissolve multi-sel
+  if (selIds.size > 1) { selIds.clear(); }
 
   if (mode === 'view') {
     if (n.videoFile) openVid(n); else { selId=id; openSB(n); }
@@ -883,7 +993,10 @@ function onKey(e) {
   const t = document.activeElement.tagName;
   if (t==='INPUT'||t==='TEXTAREA'||t==='SELECT') return;
   if (e.key==='Escape') { setMode('view'); desel(); }
-  if ((e.key==='Delete'||e.key==='Backspace') && selId) delSelected();
+  if (e.key==='Delete'||e.key==='Backspace') {
+    if (selIds.size > 1) delMultiSelected();
+    else if (selId) delSelected();
+  }
   const km = {v:'view', n:'node', c:'conn', d:'del', l:'lbl'};
   if (km[e.key] && !e.ctrlKey && !e.metaKey) setMode(km[e.key]);
 }
@@ -996,6 +1109,9 @@ function delConn(id) {
 
 // ── Sidebar ────────────────────────────────────────────────────────────────
 function openSB(n) {
+  document.getElementById('sb-multi-hdr').style.display = 'none';
+  document.getElementById('sb-single-top').style.display = '';
+  document.getElementById('sb-single-bot').style.display = '';
   document.getElementById('pl').value = n.label || '';
   document.getElementById('pi').value = n.icon  || '';
   document.getElementById('pv').value = n.videoFile || '';
@@ -1006,7 +1122,16 @@ function openSB(n) {
   sb.classList.add('open');
 }
 
-function desel() { selId = null; sb.classList.remove('open'); renderNodes(); }
+function openMultiSB() {
+  document.getElementById('sb-multi-hdr').style.display = '';
+  document.getElementById('sb-single-top').style.display = 'none';
+  document.getElementById('sb-single-bot').style.display = 'none';
+  document.getElementById('sb-multi-cnt').textContent = selIds.size + ' Nodes Selected';
+  document.querySelectorAll('.cs').forEach(s => s.classList.remove('on'));
+  sb.classList.add('open');
+}
+
+function desel() { selId = null; selIds.clear(); sb.classList.remove('open'); renderNodes(); }
 
 function updConnList(id) {
   const out = S.conns.filter(c => c.from===id);
@@ -1058,12 +1183,34 @@ function syncNode() {
 }
 
 function pickCol(c) {
+  if (selIds.size > 1) {
+    selIds.forEach(id => {
+      const n = S.nodes.find(n => n.id === id);
+      if (!n) return;
+      n.color = c;
+      S.conns.filter(cn => cn.from === id).forEach(cn => { cn.color = c + '88'; });
+    });
+    document.querySelectorAll('.cs').forEach((s,i) => s.classList.toggle('on', PAL[i]===c));
+    render(); autoSave();
+    return;
+  }
   if (!selId) return;
   const n = S.nodes.find(n => n.id===selId);
   if (!n) return;
   n.color = c;
   S.conns.filter(cn => cn.from===selId).forEach(cn => { cn.color = c+'88'; });
   document.querySelectorAll('.cs').forEach((s,i) => s.classList.toggle('on', PAL[i]===c));
+  render(); autoSave();
+}
+
+function delMultiSelected() {
+  if (!selIds.size) return;
+  selIds.forEach(id => {
+    S.nodes = S.nodes.filter(n => n.id !== id);
+    S.conns = S.conns.filter(c => c.from !== id && c.to !== id);
+  });
+  selIds.clear();
+  desel();
   render(); autoSave();
 }
 
@@ -1344,8 +1491,48 @@ async function generateMissingNodes() {
   }
 }
 
-function findFreeSpot() {
-  const used = new Set(S.nodes.map(n => `${n.col},${n.row}`));
+// ── Lasso selection ────────────────────────────────────────────────────────
+function updateLassoRect() {
+  const el = document.getElementById('sel-rect');
+  const x = Math.min(lasso.x0, lasso.x1);
+  const y = Math.min(lasso.y0, lasso.y1);
+  el.style.left   = x + 'px';
+  el.style.top    = y + 'px';
+  el.style.width  = Math.abs(lasso.x1 - lasso.x0) + 'px';
+  el.style.height = Math.abs(lasso.y1 - lasso.y0) + 'px';
+}
+
+function finalizeLasso() {
+  const el = document.getElementById('sel-rect');
+  el.style.display = 'none';
+  const x0 = Math.min(lasso.x0, lasso.x1);
+  const x1 = Math.max(lasso.x0, lasso.x1);
+  const y0 = Math.min(lasso.y0, lasso.y1);
+  const y1 = Math.max(lasso.y0, lasso.y1);
+  const moved = (x1 - x0) > 5 || (y1 - y0) > 5;
+  lasso = null;
+  if (!moved) return;
+  _skipNextCvClick = true;
+  const newSel = new Set();
+  S.nodes.forEach(n => {
+    const { x, y } = g2p(n.col, n.row);
+    if (x >= x0 && x <= x1 && y >= y0 && y <= y1) newSel.add(n.id);
+  });
+  if (newSel.size === 0) return;
+  if (newSel.size === 1) {
+    const id = [...newSel][0];
+    selIds.clear();
+    selId = id;
+    openSB(S.nodes.find(n => n.id === id));
+  } else {
+    selId = null;
+    selIds = newSel;
+    openMultiSB();
+  }
+  renderNodes();
+}
+
+function findFreeSpot() {  const used = new Set(S.nodes.map(n => `${n.col},${n.row}`));
   for (let row = 2; row < CH - 1; row++) {
     for (let col = 2; col < CW - 1; col++) {
       if (!used.has(`${col},${row}`)) return { col, row };
