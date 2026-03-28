@@ -431,7 +431,7 @@ body {
 <div id="ctx" class="hidden">
   <div class="ci" id="ctx-e"  onclick="ctxEdit()">✏️  Edit</div>
   <div class="ci" id="ctx-p"  onclick="ctxPlay()">▶  Play Video</div>
-  <div class="ci" id="ctx-c"  onclick="ctxConn()">→  Connect From</div>
+  <div class="ci" id="ctx-c"  onclick="ctxConn()">→  Connect To</div>
   <div class="csep"></div>
   <div class="ci red" id="ctx-d" onclick="ctxDel()">✕  Delete</div>
 </div>
@@ -1054,10 +1054,11 @@ function onNClick(id, e) {
   } else if (mode === 'node' || mode === 'lbl') {
     selId = id; openSB(n);
   } else if (mode === 'conn') {
-    if (!connFrom) { connFrom = id; showToast('Click target node'); renderNodes(); }
+    if (!connFrom) { connFrom = id; selId = id; openSB(n); showToast('Click target node'); renderNodes(); }
     else if (connFrom !== id) {
       addConn(connFrom, id);
-      connFrom = null; tl.setAttribute('display','none'); renderNodes();
+      connFrom = null; tl.setAttribute('display','none');
+      selId = id; openSB(n); renderNodes();
     }
   } else if (mode === 'del') {
     delNode(id);
@@ -1099,7 +1100,10 @@ function onCCtx(id, e) {
 function onKey(e) {
   const t = document.activeElement.tagName;
   if (t==='INPUT'||t==='TEXTAREA'||t==='SELECT') return;
-  if (e.key==='Escape') { desel(); }
+  if (e.key==='Escape') {
+    if (connFrom) { connFrom = null; document.getElementById('tl').setAttribute('display','none'); renderNodes(); return; }
+    desel();
+  }
   if (e.key==='Delete'||e.key==='Backspace') {
     if (selIds.size > 1) delMultiSelected();
     else if (selId) delSelected();
@@ -1270,7 +1274,13 @@ function updConnList(id) {
     h += '<div><b style="color:var(--text)">← In</b>';
     inn.forEach(c => {
       const fn = S.nodes.find(n => n.id===c.from);
-      h += `<div class="ce"><span>${esc(fn?.label||c.from)}</span></div>`;
+      h += `<div class="ce"><span>${esc(fn?.label||c.from)}</span>
+        <div style="display:flex;align-items:center;gap:5px">
+          <label style="font-size:9px;cursor:pointer;color:var(--dim)">
+            <input type="checkbox" ${c.dashed?'checked':''} onchange="setDash('${c.id}',this.checked)"> dash
+          </label>
+          <button class="cdel" onclick="delConn('${c.id}')">✕</button>
+        </div></div>`;
     }); h += '</div>';
   }
   if (!out.length && !inn.length) h = 'No connections.';
