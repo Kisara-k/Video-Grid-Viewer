@@ -232,22 +232,35 @@ body {
 #vm {
   position: fixed; inset: 0; background: rgba(0,0,0,0.87);
   z-index: 200; display: flex; align-items: center; justify-content: center;
-  backdrop-filter: blur(5px);
+  backdrop-filter: blur(5px); overflow: auto; padding: 30px 20px;
 }
 #vm.hidden { display: none; }
 #vm-box {
   background: #090e20; border: 1px solid rgba(74,143,217,0.3); border-radius: 10px;
-  overflow: hidden; max-width: 900px; width: 92vw;
+  overflow: hidden; width: fit-content; min-width: 380px; flex-shrink: 0;
   box-shadow: 0 22px 60px rgba(0,0,0,0.75);
 }
 #vm-hdr {
-  padding: 11px 14px; display: flex; align-items: center;
-  justify-content: space-between; border-bottom: 1px solid var(--bord);
+  padding: 11px 14px; display: flex; align-items: center; gap: 10px;
+  border-bottom: 1px solid var(--bord);
 }
+#vm-spd {
+  display: flex; align-items: center; gap: 7px; margin-left: auto; flex-shrink: 0;
+}
+#vm-spd label { font-size: 11px; color: var(--dim); white-space: nowrap; }
+#vm-spd input[type=range] { width: 90px; height: 4px; accent-color: var(--acc); cursor: pointer; }
+#vm-spd span { font-size: 11px; color: var(--text); min-width: 38px; text-align: right; white-space: nowrap; }
 #vm-title { font-size: 13px; font-weight: 600; }
 #vm-close { background: none; border: none; color: var(--dim); cursor: pointer; font-size: 17px; padding: 2px 6px; }
 #vm-close:hover { color: #fff; }
-#vp { width: 100%; max-height: 68vh; display: block; background: #000; }
+#vp { width: auto; height: auto; max-height: 68vh; display: block; background: #000; }
+#vp::-webkit-media-controls-panel {
+  background: transparent;
+  background-image: none !important;
+}
+#vp::-webkit-media-controls-overlay-play-button {
+  background: transparent;
+}
 
 /* ── Context menu ───────────────────────────────────────────────────────── */
 #ctx {
@@ -336,6 +349,12 @@ body {
   <button class="btn" id="folder-lbl" title="Change videos folder" onclick="changeVideoDir()">📁 Not set</button>
   <button class="btn red" onclick="clearAll()">Clear</button>
   <div class="tsep"></div>
+  <div class="zgroup">
+    <label>▶ Speed</label>
+    <input type="range" id="spd" min="0" max="100" step="0.5" value="25.5" oninput="setSpeedPos(+this.value)">
+    <span id="spdv">1.00×</span>
+  </div>
+  <div class="tsep"></div>
   <span id="hint">Click nodes to play videos</span>
 </div>
 
@@ -418,6 +437,11 @@ body {
   <div id="vm-box">
     <div id="vm-hdr">
       <span id="vm-title"></span>
+      <div id="vm-spd">
+        <label>▶ Speed</label>
+        <input type="range" id="spd2" min="0" max="100" step="0.5" value="25.5" oninput="setSpeedPos(+this.value)">
+        <span id="spdv2">1.00×</span>
+      </div>
       <button id="vm-close" onclick="closeVid()">✕</button>
     </div>
     <video id="vp" controls>
@@ -1464,13 +1488,73 @@ function ctxDel()  {
 }
 
 // ── Video ──────────────────────────────────────────────────────────────────
+let defaultSpeed = 1;
+let vmScale  = 1;
+let vmBaseH  = 0;  // base px height at scale=1, set once video metadata known
+
+// Piecewise speed mapping: slider pos 0-60 → linear 0.25×-2×, pos 60-100 → exponential 2×-4×
+// Result is always rounded to the nearest 0.05 increment
+function posToSpd(pos) {
+  const raw = pos <= 60
+    ? 0.25 + pos * (1.75 / 60)
+    : 2.0 * Math.pow(2, (pos - 60) / 40);
+  return Math.round(raw / 0.05) * 0.05;
+}
+function spdToPos(spd) {
+  if (spd <= 2.0) return (spd - 0.25) * 60 / 1.75;
+  return 60 + Math.log2(spd / 2.0) * 40;
+}
+
+function setSpeedPos(pos) {
+  const spd = posToSpd(pos);
+  defaultSpeed = spd;
+  const label = spd.toFixed(2) + '×';
+  document.getElementById('spd').value         = pos;
+  document.getElementById('spd2').value        = pos;
+  document.getElementById('spdv').textContent  = label;
+  document.getElementById('spdv2').textContent = label;
+  const vp = document.getElementById('vp');
+  if (!document.getElementById('vm').classList.contains('hidden')) vp.playbackRate = spd;
+}
+
 function openVid(n) {
   if (!n.videoFile) { showToast('No video file set'); return; }
   document.getElementById('vm-title').textContent = n.label||'Video';
   document.getElementById('vs').src = n.videoFile;
-  document.getElementById('vp').load();
+  const vp = document.getElementById('vp');
+  vp.load();
+  vp.playbackRate = defaultSpeed;
+  const applySpeed = () => { vp.playbackRate = defaultSpeed; vp.removeEventListener('canplay', applySpeed); };
+  vp.addEventListener('canplay', applySpeed);
+  // Compute base height once intrinsic dimensions are known, then apply scale
+  const onMeta = () => {
+    vp.removeEventListener('loadedmetadata', onMeta);
+    const maxH = window.innerHeight * 0.68; // 68vh in px
+    const aspect = vp.videoWidth / vp.videoHeight;
+    const fitH = Math.min(vp.videoHeight, maxH);
+    const fitW = fitH * aspect;
+    // also cap by viewport width with some padding
+    const maxW = window.innerWidth * 0.95;
+    vmBaseH = fitW > maxW ? maxW / aspect : fitH;
+    _applyVmScale();
+  };
+  vp.addEventListener('loadedmetadata', onMeta);
   document.getElementById('vm').classList.remove('hidden');
-  document.getElementById('vp').play().catch(()=>{});
+  _applyVmScale(); // initial apply before metadata (uses last vmBaseH or fallback)
+  vp.play().catch(()=>{});
+}
+function _applyVmScale() {
+  const vp = document.getElementById('vp');
+  if (vmBaseH > 0) {
+    // Explicit height lets the browser upscale beyond native resolution
+    vp.style.height    = (vmBaseH * vmScale).toFixed(1) + 'px';
+    vp.style.maxHeight = 'none';
+    vp.style.width     = 'auto';
+  } else {
+    // Fallback before metadata arrives
+    vp.style.height    = '';
+    vp.style.maxHeight = (68 * vmScale).toFixed(2) + 'vh';
+  }
 }
 function closeVid() {
   document.getElementById('vp').pause();
@@ -1480,6 +1564,12 @@ function closeVid() {
 document.getElementById('vm').addEventListener('click', e => {
   if (e.target===document.getElementById('vm')) closeVid();
 });
+document.getElementById('vm').addEventListener('wheel', e => {
+  if (!e.ctrlKey) return;
+  e.preventDefault();
+  vmScale = Math.max(0.2, vmScale + (e.deltaY < 0 ? 0.08 : -0.08));
+  _applyVmScale();
+}, { passive: false });
 
 // ── File I/O ───────────────────────────────────────────────────────────────
 async function doSave() {
