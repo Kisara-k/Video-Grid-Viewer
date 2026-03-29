@@ -239,6 +239,7 @@ body {
   background: #090e20; border: 1px solid rgba(74,143,217,0.3); border-radius: 10px;
   overflow: hidden; width: fit-content; min-width: 380px; flex-shrink: 0;
   box-shadow: 0 22px 60px rgba(0,0,0,0.75);
+  display: flex; flex-direction: column;
 }
 #vm-hdr {
   padding: 11px 14px; display: flex; align-items: center; gap: 10px;
@@ -257,9 +258,35 @@ body {
 #vm-vol input[type=range] { width: 72px; height: 4px; accent-color: var(--acc); cursor: pointer; }
 #vm-vol span { font-size: 11px; color: var(--text); min-width: 30px; text-align: right; white-space: nowrap; }
 .vm-sep { width: 1px; height: 20px; background: var(--bord); flex-shrink: 0; }
-#vm-title { font-size: 13px; font-weight: 600; }
-#vm-close { background: none; border: none; color: var(--dim); cursor: pointer; font-size: 17px; padding: 2px 6px; }
-#vm-close:hover { color: #fff; }
+#vm-title { font-size: 13px; font-weight: 600; user-select: text; cursor: text; }
+#vm-notes-btn {
+  background: none; border: none; color: var(--dim);
+  cursor: pointer; font-size: 16px; padding: 2px 6px; line-height: 1;
+  transition: color 0.13s; flex-shrink: 0; font-family: inherit;
+}
+#vm-notes-btn:hover { color: #fff; }
+#vm-notes-btn.on { color: var(--acc); }
+/* Notes panel — position:fixed, geometry set by JS on open */
+#vm-notes-panel {
+  position: fixed; z-index: 201;
+  width: 0; overflow: hidden; transition: width 0.2s ease;
+  background: #090e20; border: 0px solid rgba(74,143,217,0.3);
+  border-radius: 10px; display: flex; flex-direction: column;
+  box-shadow: 0 22px 60px rgba(0,0,0,0.75);
+}
+#vm-notes-panel.open { width: 260px; border-width: 1px; }
+#vm-notes-hdr {
+  font-size: 10px; font-weight: 700; color: var(--acc);
+  text-transform: uppercase; letter-spacing: 0.08em;
+  padding: 10px 12px 6px; border-bottom: 1px solid var(--bord);
+  flex-shrink: 0; white-space: nowrap;
+}
+#vm-notes-txt {
+  flex: 1; resize: none; background: transparent; border: none;
+  color: var(--text); font-family: inherit; font-size: 12px;
+  padding: 10px 12px; outline: none; line-height: 1.5;
+}
+#vm-notes-txt:focus { background: rgba(255,255,255,0.02); }
 #vp { width: auto; height: auto; max-height: 68vh; display: block; background: #000; }
 #vp::-webkit-media-controls-panel {
   background: transparent;
@@ -455,11 +482,15 @@ body {
         <input type="range" id="spd2" min="0" max="100" step="0.5" value="25.5" oninput="setSpeedPos(+this.value)">
         <span id="spdv2">1.00×</span>
       </div>
-      <button id="vm-close" onclick="closeVid()">✕</button>
+      <button id="vm-notes-btn" onclick="toggleVmNotes()" title="Notes">☰</button>
     </div>
     <video id="vp" controls>
       <source id="vs" src="" type="video/mp4">
     </video>
+  </div>
+  <div id="vm-notes-panel">
+    <div id="vm-notes-hdr">Notes</div>
+    <textarea id="vm-notes-txt" placeholder="Add notes for this video..."></textarea>
   </div>
 </div>
 
@@ -1596,6 +1627,7 @@ function ctxDel()  {
 let defaultSpeed = 1;
 let vmScale  = 1;
 let vmBaseH  = 0;  // base px height at scale=1, set once video metadata known
+let vmNode   = null; // node currently playing in the modal
 
 // Piecewise speed mapping: slider pos 0-60 → linear 0.25×-2×, pos 60-100 → exponential 2×-4×
 // Result is always rounded to the nearest 0.05 increment
@@ -1631,9 +1663,46 @@ function setSpeedPos(pos) {
   if (!document.getElementById('vm').classList.contains('hidden')) vp.playbackRate = spd;
 }
 
+function _positionVmNotes() {
+  const panel = document.getElementById('vm-notes-panel');
+  if (!panel.classList.contains('open')) return;
+  const boxRect    = document.getElementById('vm-box').getBoundingClientRect();
+  const hdrRect    = document.getElementById('vm-hdr').getBoundingClientRect();
+  const spaceRight = window.innerWidth - boxRect.right - 8;
+  if (spaceRight >= 268) {
+    // Expand to the right without touching the video
+    panel.style.left         = (boxRect.right + 8) + 'px';
+    panel.style.top          = boxRect.top + 'px';
+    panel.style.height       = boxRect.height + 'px';
+    panel.style.borderRadius = '10px';
+  } else {
+    // Overlay the right edge of the video box — start below the header bar
+    panel.style.left         = (boxRect.right - 260) + 'px';
+    panel.style.top          = (boxRect.top + hdrRect.height) + 'px';
+    panel.style.height       = (boxRect.height - hdrRect.height) + 'px';
+    panel.style.borderRadius = '0 0 10px 0';
+  }
+}
+
+function toggleVmNotes() {
+  const panel   = document.getElementById('vm-notes-panel');
+  const btn     = document.getElementById('vm-notes-btn');
+  panel.classList.toggle('open');
+  btn.classList.toggle('on');
+  _positionVmNotes();
+}
+
+window.addEventListener('resize', _positionVmNotes);
+
+document.getElementById('vm-notes-txt').addEventListener('input', () => {
+  if (vmNode) { vmNode.notes = document.getElementById('vm-notes-txt').value; autoSave(); }
+});
+
 function openVid(n) {
   if (!n.videoFile) { showToast('No video file set'); return; }
+  vmNode = n;
   document.getElementById('vm-title').textContent = n.label||'Video';
+  document.getElementById('vm-notes-txt').value = n.notes || '';
   document.getElementById('vs').src = n.videoFile;
   const vp = document.getElementById('vp');
   vp.load();
@@ -1671,12 +1740,18 @@ function _applyVmScale() {
   }
 }
 function closeVid() {
+  vmNode = null;
   document.getElementById('vp').pause();
   document.getElementById('vm').classList.add('hidden');
   document.getElementById('vs').src = '';
 }
 document.getElementById('vm').addEventListener('click', e => {
   if (e.target===document.getElementById('vm')) closeVid();
+});
+document.getElementById('vm-hdr').addEventListener('mousedown', e => {
+  if (e.target !== document.getElementById('vm-title')) {
+    window.getSelection()?.removeAllRanges();
+  }
 });
 document.getElementById('vm').addEventListener('wheel', e => {
   if (e.ctrlKey) {
