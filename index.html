@@ -363,11 +363,11 @@ body {
   <div id="canvas">
     <svg id="svg-layer" xmlns="http://www.w3.org/2000/svg">
       <defs>
-        <marker id="ah" markerWidth="9" markerHeight="6.5" refX="0" refY="3.25" orient="auto">
-          <polygon points="0 0, 9 3.25, 0 6.5" fill="context-stroke"/>
+        <marker id="ah" markerUnits="userSpaceOnUse" markerWidth="15.5" markerHeight="11.8" refX="0" refY="4.9" orient="auto">
+          <polygon points="0 0, 13.5 4.9, 0 9.8" fill="context-stroke"/>
         </marker>
-        <marker id="ah2" markerWidth="9" markerHeight="6.5" refX="0" refY="3.25" orient="auto">
-          <polygon points="0 0, 9 3.25, 0 6.5" fill="context-stroke"/>
+        <marker id="ah2" markerUnits="userSpaceOnUse" markerWidth="15.5" markerHeight="11.8" refX="0" refY="4.9" orient="auto">
+          <polygon points="0 0, 13.5 4.9, 0 9.8" fill="context-stroke"/>
         </marker>
       </defs>
       <g id="cg"></g>
@@ -570,6 +570,11 @@ let ttHide   = null;
 let zoomX    = 1;
 let zoomY    = 1;
 
+// Arrowhead length as a fraction of NR — single source of truth for both
+// updateMarkers() and pathD() so they never drift apart.
+const AR_SCALE    = 0.6;
+let   ARROW_REACH = NR * AR_SCALE; // updated whenever NR changes
+
 // File System API handle for direct file save
 let fileHandle = null;
 
@@ -594,6 +599,7 @@ function boot() {
   buildPal();
   load();          // load first — may update CW/CH/nodeSize/zoom vars
   syncViewUI();    // reflect loaded vars into toolbar controls
+  updateMarkers(); // scale arrowheads to match restored nodeSize
   sizeCanvas();
   if (!S.nodes.length) loadSample();
   render();
@@ -707,8 +713,27 @@ function setNodeSize(v) {
   NR = nodeSize / 2;
   document.getElementById('nsizev').textContent = nodeSize + 'px';
   updateGhost();
+  updateMarkers();
   render();
   autoSave();
+}
+
+function updateMarkers() {
+  // markerUnits=userSpaceOnUse: coordinates are plain px, not scaled by stroke-width.
+  ARROW_REACH = NR * AR_SCALE;  // keep in sync with current NR
+  const AR = ARROW_REACH;
+  const h  = f(AR * (6.5 / 9));     // height (original aspect ratio)
+  const ry = f(+h / 2);             // vertical centre
+  const arF = f(AR);
+  ['ah','ah2'].forEach(mid => {
+    const m = document.getElementById(mid);
+    if (!m) return;
+    m.setAttribute('markerUnits', 'userSpaceOnUse');
+    m.setAttribute('markerWidth',  f(AR + 2));    // +2 px buffer for antialiasing
+    m.setAttribute('markerHeight', f(+h + 2));
+    m.setAttribute('refY', ry);
+    m.querySelector('polygon').setAttribute('points', `0 0, ${arF} ${ry}, 0 ${h}`);
+  });
 }
 
 // ── Mode ───────────────────────────────────────────────────────────────────
@@ -892,7 +917,7 @@ function pathD(p1, p2) {
 
   const hd = dx >= 0 ? 1 : -1;  // horizontal direction (±1)
   const vd = dy >= 0 ? 1 : -1;  // vertical direction (±1)
-  const AR = 13.5; // arrowhead reach in px (markerWidth × strokeWidth)
+  const AR = ARROW_REACH; // arrowhead reach in px — single source of truth
 
   // ── Straight horizontal ──
   if (Math.abs(dy) < NR * 0.6) {
