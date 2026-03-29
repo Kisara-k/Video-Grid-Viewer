@@ -525,7 +525,7 @@ body {
       </div>
       <button id="vm-notes-btn" onclick="toggleVmNotes()" title="Notes">☰</button>
     </div>
-    <video id="vp" controls>
+    <video id="vp" controls preload="metadata">
       <source id="vs" src="" type="video/mp4">
     </video>
   </div>
@@ -668,6 +668,9 @@ let _currentBlobUrl = null;
 
 // Duration cache
 const durCache = {};
+const durPending = new Map();
+let durPreloadToken = 0;
+let durPreloadTimer = null;
 
 // ── DOM ────────────────────────────────────────────────────────────────────
 const canvas = document.getElementById('canvas');
@@ -1403,11 +1406,8 @@ function showTT(n, e) {
     if (durCache[n.videoFile] !== undefined) {
       document.getElementById('tt-dur-v').textContent = fmtDur(durCache[n.videoFile]);
     } else {
-      _resolveVideoSrc(n.videoFile).then(src => {
-        probeDur(src, d => {
-          durCache[n.videoFile] = d;
-          if (ttNodeId === n.id) document.getElementById('tt-dur-v').textContent = fmtDur(d);
-        });
+      loadDurationForNode(n).then(d => {
+        if (ttNodeId === n.id) document.getElementById('tt-dur-v').textContent = fmtDur(d);
       });
     }
     document.getElementById('tt-play').style.display = '';
@@ -1464,10 +1464,92 @@ function probeDur(src, cb) {
   vp.muted = true;
   vp.style.display = 'none';
   document.body.appendChild(vp);
-  const cleanup = () => { try { document.body.removeChild(vp); } catch(_) {} };
+  let objectUrl = src && src.startsWith('blob:') ? src : null;
+  const cleanup = () => {
+    try { document.body.removeChild(vp); } catch(_) {}
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+  };
   vp.onloadedmetadata = () => { const d = isFinite(vp.duration) ? vp.duration : null; cleanup(); cb(d); };
   vp.onerror = () => { cleanup(); cb(null); };
   vp.src = src;
+}
+
+async function _resolveVideoFile(videoFile) {
+  const handle = await _loadHandle().catch(() => null);
+  if (!handle) return null;
+  const parts = videoFile.split('/');
+  let current = handle;
+  try {
+    for (let i = 0; i < parts.length - 1; i++) {
+      current = await current.getDirectoryHandle(parts[i]);
+    }
+    const fh = await current.getFileHandle(parts[parts.length - 1]);
+    return await fh.getFile();
+  } catch(e) {
+    return null;
+  }
+}
+
+async function loadDurationForNode(n) {
+  if (!n?.videoFile) return null;
+  if (durCache[n.videoFile] !== undefined) return durCache[n.videoFile];
+  if (durPending.has(n.videoFile)) return durPending.get(n.videoFile);
+
+  const pending = (async () => {
+    const file = await _resolveVideoFile(n.videoFile);
+    const src = file ? URL.createObjectURL(file) : await _resolveVideoSrc(n.videoFile);
+    return await new Promise(resolve => {
+      probeDur(src, d => {
+        durCache[n.videoFile] = d;
+        durPending.delete(n.videoFile);
+        resolve(d);
+      });
+    });
+  })().catch(() => {
+    durPending.delete(n.videoFile);
+    durCache[n.videoFile] = null;
+    return null;
+  });
+
+  durPending.set(n.videoFile, pending);
+  return pending;
+}
+
+async function preloadDurations() {
+  const token = ++durPreloadToken;
+  const nodes = S.nodes.filter(n => n.videoFile && durCache[n.videoFile] === undefined);
+  if (!nodes.length) return;
+
+  const concurrency = 1;
+  let index = 0;
+  async function worker() {
+    while (index < nodes.length && token === durPreloadToken) {
+      const node = nodes[index++];
+      await loadDurationForNode(node);
+      if (ttNodeId === node.id && !tt.classList.contains('hidden')) {
+        document.getElementById('tt-dur-v').textContent = fmtDur(durCache[node.videoFile]);
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, nodes.length) }, () => worker()));
+}
+
+function cancelDurationPreload() {
+  durPreloadToken++;
+  if (durPreloadTimer) {
+    clearTimeout(durPreloadTimer);
+    durPreloadTimer = null;
+  }
+}
+
+function scheduleDurationPreload(delay = 1200) {
+  cancelDurationPreload();
+  durPreloadTimer = setTimeout(() => {
+    durPreloadTimer = null;
+    if (!document.getElementById('vm').classList.contains('hidden')) return;
+    preloadDurations();
+  }, delay);
 }
 
 function fmtDur(s) {
@@ -1785,6 +1867,7 @@ document.getElementById('vm-notes-txt').addEventListener('input', () => {
 
 async function openVid(n) {
   if (!n.videoFile) { showToast('No video file set'); return; }
+  cancelDurationPreload();
   vmNode = n;
   document.getElementById('vm-title').textContent = n.label||'Video';
   document.getElementById('vm-notes-txt').value = n.notes || '';
@@ -1793,7 +1876,13 @@ async function openVid(n) {
   if (src.startsWith('blob:')) _currentBlobUrl = src;
   document.getElementById('vs').src = src;
   const vp = document.getElementById('vp');
+  vp.preload = 'metadata';
   vp.load();
+  const onDurMeta = () => {
+    vp.removeEventListener('loadedmetadata', onDurMeta);
+    if (vmNode?.videoFile) durCache[vmNode.videoFile] = isFinite(vp.duration) ? vp.duration : null;
+  };
+  vp.addEventListener('loadedmetadata', onDurMeta);
   vp.playbackRate = defaultSpeed;
   const applySpeed = () => { vp.playbackRate = defaultSpeed; vp.removeEventListener('canplay', applySpeed); };
   vp.addEventListener('canplay', applySpeed);
@@ -1827,6 +1916,7 @@ function closeVid() {
   document.getElementById('vm').classList.add('hidden');
   document.getElementById('vs').src = '';
   if (_currentBlobUrl) { URL.revokeObjectURL(_currentBlobUrl); _currentBlobUrl = null; }
+  scheduleDurationPreload();
 }
 document.getElementById('vm').addEventListener('click', e => {
   if (e.target===document.getElementById('vm')) closeVid();
@@ -1929,6 +2019,7 @@ function parseLoad(text) {
     applyView(d.view);
     syncViewUI(); sizeCanvas();
     desel(); render(); showToast('Loaded');
+    scheduleDurationPreload(200);
   } catch { showToast('Invalid file'); }
 }
 
@@ -1997,20 +2088,8 @@ async function _initFolderLabel() {
 // Resolves a stored videoFile path to a blob URL via the directory handle.
 // Falls back to the raw string if no handle is available.
 async function _resolveVideoSrc(videoFile) {
-  const handle = await _loadHandle().catch(() => null);
-  if (!handle) return videoFile;
-  const parts = videoFile.split('/');
-  let current = handle;
-  try {
-    for (let i = 0; i < parts.length - 1; i++) {
-      current = await current.getDirectoryHandle(parts[i]);
-    }
-    const fh = await current.getFileHandle(parts[parts.length - 1]);
-    const file = await fh.getFile();
-    return URL.createObjectURL(file);
-  } catch(e) {
-    return videoFile;
-  }
+  const file = await _resolveVideoFile(videoFile);
+  return file ? URL.createObjectURL(file) : videoFile;
 }
 
 // Returns a directory handle, reusing the stored one.
@@ -2182,6 +2261,7 @@ async function generateMissingNodes() {
 
   if (added > 0) {
     sizeCanvas(); render(); autoSave(); showToast(`Added ${added} node${added > 1 ? 's' : ''}`);
+    scheduleDurationPreload(200);
   } else {
     showToast('No new videos to add');
   }
@@ -2374,6 +2454,7 @@ function loadSample() {
 
 // ── Start ──────────────────────────────────────────────────────────────────
 boot();
+scheduleDurationPreload(200);
 </script>
 </body>
 </html>
