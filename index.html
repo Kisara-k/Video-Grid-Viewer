@@ -1025,6 +1025,7 @@ function setupEv() {
   document.querySelectorAll('input[type=range]').forEach(sl => {
     sl.addEventListener('wheel', e => {
       e.preventDefault();
+      e.stopPropagation();
       const dir = e.deltaY < 0 ? 1 : -1;
       if (sl.id === 'spd' || sl.id === 'spd2') {
         // Step by one 0.05× speed increment, convert back to position
@@ -1692,7 +1693,8 @@ document.getElementById('vm').addEventListener('wheel', e => {
 }, { passive: false });
 document.getElementById('vol').addEventListener('wheel', e => {
   e.preventDefault();
-  const step = 0.05;
+  e.stopPropagation();
+  const step = 0.04;
   const cur = parseFloat(document.getElementById('vol').value);
   setVolume(cur + (e.deltaY < 0 ? step : -step));
 }, { passive: false });
