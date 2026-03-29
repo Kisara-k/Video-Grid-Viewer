@@ -376,12 +376,9 @@ body {
     <span id="nsizev">54px</span>
   </div>
   <div class="tsep"></div>
-  <button class="btn" onclick="doSave()">💾 Save</button>
-  <button class="btn" onclick="doLoad()">📂 Load</button>
   <button class="btn" onclick="doExport()">↑ Export</button>
   <button class="btn" onclick="generateMissingNodes()">⬇ Generate Nodes</button>
   <button class="btn" id="folder-lbl" title="Change videos folder" onclick="changeVideoDir()">📁 videos</button>
-  <button class="btn red" onclick="clearAll()">Clear</button>
   <div class="tsep"></div>
   <div class="zgroup">
     <label>▶ Speed</label>
@@ -618,9 +615,6 @@ let zoomY    = 1;
 // updateMarkers() and pathD() so they never drift apart.
 const AR_SCALE    = 0.6;
 let   ARROW_REACH = NR * AR_SCALE; // updated whenever NR changes
-
-// File System API handle for direct file save
-let fileHandle = null;
 
 // Default video directory name (used as path prefix for node videoFile paths)
 let _videoDirName = localStorage.getItem('gv_dirName') || 'videos';
@@ -1488,7 +1482,7 @@ function openSB(n) {
   document.getElementById('sb-single-bot').style.display = '';
   document.getElementById('pl').value = n.label || '';
   document.getElementById('pi').value = n.icon  || '';
-  document.getElementById('pv').value = (n.videoFile || '').replace(new RegExp('^' + _videoDirName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/'), '');
+  document.getElementById('pv').value = n.videoFile || '';
   document.getElementById('ps').value = n.shape || 'circle';
   document.getElementById('vf').style.display = n.shape === 'lbl' ? 'none' : '';
   document.querySelectorAll('.cs').forEach((s,i) => s.classList.toggle('on', PAL[i]===n.color));
@@ -1547,8 +1541,7 @@ function syncNode() {
   if (!n) return;
   n.label     = document.getElementById('pl').value;
   n.icon      = document.getElementById('pi').value || '●';
-  const rawVideo = document.getElementById('pv').value;
-  const newVideo = rawVideo && !rawVideo.startsWith(_videoDirName + '/') ? _videoDirName + '/' + rawVideo : rawVideo;
+  const newVideo = document.getElementById('pv').value;
   // Enforce uniqueness: one video path may only be linked to one node
   if (newVideo && newVideo !== n.videoFile) {
     const existing = S.nodes.find(o => o.id !== selId && o.videoFile === newVideo);
@@ -1788,55 +1781,40 @@ document.getElementById('vol').addEventListener('wheel', e => {
 }, { passive: false });
 
 // ── File I/O ───────────────────────────────────────────────────────────────
-async function doSave() {
-  if (!window.showSaveFilePicker) { doExport(); return; } // fallback
-  try {
-    if (!fileHandle) {
-      fileHandle = await window.showSaveFilePicker({
-        suggestedName: 'grid-viewer.json',
-        types: [{ description: 'JSON file', accept: { 'application/json': ['.json'] } }],
-      });
-    }
-    await writeHandle(fileHandle);
-    showToast('Saved');
-  } catch(e) { if (e.name!=='AbortError') { showToast('Save failed'); console.error(e); } }
-}
-
-async function doLoad() {
-  if (!window.showOpenFilePicker) { legacyImport(); return; }
-  try {
-    const [h] = await window.showOpenFilePicker({
-      types: [{ description: 'JSON file', accept: { 'application/json': ['.json'] } }],
-    });
-    fileHandle = h;
-    const file = await h.getFile();
-    parseLoad(await file.text());
-  } catch(e) { if (e.name!=='AbortError') { showToast('Load failed'); console.error(e); } }
-}
-
-function viewState() {
-  return { zoomX, zoomY, CW, CH, nodeSize };
-}
-
-async function writeHandle(h) {
-  const w = await h.createWritable();
-  await w.write(JSON.stringify({ S, UID, view: viewState() }, null, 2));
-  await w.close();
+async function _getJsonHandle(dirHandle, create) {
+  try { return await dirHandle.getFileHandle('.grid-viewer.json.json', { create }); } catch { return null; }
 }
 
 async function autoSave() {
-  if (fileHandle) {
-    try { await writeHandle(fileHandle); } catch(e) {}
-  }
-  // Also keep localStorage as backup
-  try { localStorage.setItem('gv_bak', JSON.stringify({ S, UID, view: viewState() })); } catch(e) {}
+  const dir = await _loadHandle().catch(() => null);
+  if (!dir) return;
+  try {
+    const h = await _getJsonHandle(dir, true);
+    if (h) {
+      const prefix = _videoDirName + '/';
+      const stripped = {
+        ...S,
+        nodes: S.nodes.map(n => n.videoFile && n.videoFile.startsWith(prefix)
+          ? { ...n, videoFile: n.videoFile.slice(prefix.length) }
+          : n)
+      };
+      const w = await h.createWritable();
+      await w.write(JSON.stringify({ S: stripped, UID, view: viewState() }, null, 2));
+      await w.close();
+    }
+  } catch(e) {}
+  try { localStorage.setItem('gv_bak', JSON.stringify({ S, UID, view: viewState() })); } catch(_) {}
 }
 
 function doExport() {
   const blob = new Blob([JSON.stringify({S, UID, view: viewState()},null,2)], {type:'application/json'});
-  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: 'grid-viewer.json' });
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: '.grid-viewer.json.json' });
   a.click(); URL.revokeObjectURL(a.href);
   showToast('Exported');
+}
+
+function viewState() {
+  return { zoomX, zoomY, CW, CH, nodeSize };
 }
 
 function legacyImport() {
@@ -1861,7 +1839,15 @@ function applyView(v) {
 function parseLoad(text) {
   try {
     const d = JSON.parse(text);
-    S = d.S; UID = d.UID || 1;
+    // Backward compat: strip old-style prefix from paths if present
+    const prefix = _videoDirName + '/';
+    S = {
+      ...d.S,
+      nodes: d.S.nodes.map(n => n.videoFile && n.videoFile.startsWith(prefix)
+        ? { ...n, videoFile: n.videoFile.slice(prefix.length) }
+        : n)
+    };
+    UID = d.UID || 1;
     undoStack.length = 0; redoStack.length = 0;
     applyView(d.view);
     syncViewUI(); sizeCanvas();
@@ -1884,7 +1870,7 @@ function load() {
 function clearAll() {
   if (!confirm('Clear everything?')) return;
   pushUndo();
-  S = {nodes:[],conns:[]}; UID = 1; fileHandle = null;
+  S = {nodes:[],conns:[]}; UID = 1;
   desel(); render(); autoSave();
 }
 
@@ -1936,9 +1922,7 @@ async function _initFolderLabel() {
 async function _resolveVideoSrc(videoFile) {
   const handle = await _loadHandle().catch(() => null);
   if (!handle) return videoFile;
-  const prefix = _videoDirName + '/';
-  const relPath = videoFile.startsWith(prefix) ? videoFile.slice(prefix.length) : videoFile;
-  const parts = relPath.split('/');
+  const parts = videoFile.split('/');
   let current = handle;
   try {
     for (let i = 0; i < parts.length - 1; i++) {
@@ -1958,15 +1942,17 @@ async function _getVideoDir(forceNew) {
   if (!window.showDirectoryPicker) { showToast('Not supported in this browser'); return null; }
   let handle = forceNew ? null : await _loadHandle().catch(() => null);
   if (handle) {
-    const perm = await handle.queryPermission({ mode: 'read' });
+    const perm = await handle.queryPermission({ mode: 'readwrite' });
     if (perm !== 'granted') {
-      const req = await handle.requestPermission({ mode: 'read' });
+      const req = await handle.requestPermission({ mode: 'readwrite' });
       if (req !== 'granted') handle = null;
     }
   }
   if (!handle) {
     try {
-      handle = await window.showDirectoryPicker({ mode: 'read', startIn: 'videos' });
+      const existing = await _loadHandle().catch(() => null);
+      const startIn = existing || 'videos';
+      handle = await window.showDirectoryPicker({ mode: 'readwrite', startIn });
       await _saveHandle(handle);
     } catch(e) {
       if (e.name !== 'AbortError') showToast('Could not open folder');
@@ -1978,7 +1964,27 @@ async function _getVideoDir(forceNew) {
 }
 
 async function changeVideoDir() {
-  await _getVideoDir(true);
+  // Save current state to the old directory before switching
+  await autoSave();
+  // Pick a new directory (always force picker)
+  const dirHandle = await _getVideoDir(true);
+  if (!dirHandle) return;
+  // Clear current graph
+  pushUndo();
+  S = { nodes: [], conns: [] }; UID = 1;
+  desel(); render();
+  // Try to load existing JSON from the new directory
+  const jsonHandle = await _getJsonHandle(dirHandle, false);
+  if (jsonHandle) {
+    try {
+      const file = await jsonHandle.getFile();
+      parseLoad(await file.text());
+      showToast('Loaded from directory');
+      return;
+    } catch(e) { /* fall through to generate */ }
+  }
+  // No JSON found — auto-generate nodes from videos
+  await generateMissingNodes();
 }
 
 // ── Generate nodes for unlinked videos ────────────────────────────────────
@@ -2008,7 +2014,6 @@ async function generateMissingNodes() {
 
   found.sort((a, b) => a.localeCompare(b));
 
-  const dirName = _videoDirName;
   const existingPaths = new Set(S.nodes.filter(n => n.videoFile).map(n => n.videoFile));
 
   let added = 0;
@@ -2017,13 +2022,12 @@ async function generateMissingNodes() {
   // Pre-group filtered files by folder (found is already sorted, so folders are contiguous)
   const toPlace = [];
   for (const relPath of found) {
-    const fullPath = `${dirName}/${relPath}`;
-    if (existingPaths.has(fullPath)) continue;
+    if (existingPaths.has(relPath)) continue;
     const fname  = relPath.includes('/') ? relPath.slice(relPath.lastIndexOf('/') + 1) : relPath;
     const folder = relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : '';
     const rawTitle = fname.lastIndexOf('.') >= 0 ? fname.slice(0, fname.lastIndexOf('.')) : fname;
     const title  = rawTitle.replace(/^[\d.]+\s+/, '');
-    toPlace.push({ relPath, fullPath, folder, title });
+    toPlace.push({ relPath, folder, title });
   }
 
   // Snapshot occupied rows BEFORE placement; updated as we place
@@ -2078,7 +2082,7 @@ async function generateMissingNodes() {
       icon: '▶',
       color: folderColors[item.folder],
       shape: 'circle',
-      videoFile: item.fullPath,
+      videoFile: item.relPath,
       notes: '',
     };
     S.nodes.push(node);
