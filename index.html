@@ -131,8 +131,8 @@ body {
   pointer-events: none; text-align: center;
 }
 .node:hover .nb { transform: scale(1.12); }
-.node.sel .nb   { border-color: rgba(255,255,255,0.85) !important; outline: 2px solid rgba(255,255,255,0.3); outline-offset: 2px; }
-.node.msel .nb  { border-color: rgba(255,220,60,0.9) !important; outline: 2px solid rgba(255,220,60,0.38); outline-offset: 2px; }
+.node.sel .nb   { border-color: rgba(255,255,255,0.85) !important; }
+.node.msel .nb  { border-color: rgba(255,220,60,0.9) !important; }
 .node.csrc .nb  { animation: pulse 0.85s ease-in-out infinite; }
 @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.16); } }
 
@@ -474,13 +474,23 @@ body {
   <div id="sb-single-top">
     <h3>Node Properties</h3>
     <div class="f"><label>Label</label><input id="pl" type="text" placeholder="Name" oninput="syncNode()" onfocus="sbFocus()"></div>
+  </div>
+  <!-- Shared icon + shape (single and multi) -->
+  <div id="sb-shared">
     <div class="f icon-field"><label>Icon (emoji)</label>
       <div class="icon-row">
-        <input id="pi" type="text" placeholder="🧠" maxlength="2" oninput="syncNode()" onfocus="sbFocus()">
+        <input id="pi" type="text" placeholder="▶" maxlength="2" oninput="sharedIconInput(this.value)" onfocus="sbFocus()">
         <button class="emoji-toggle" onclick="toggleEmojiPicker(event)" title="Emoji picker">🎥</button>
       </div>
       <div id="emoji-picker">
         <div class="ep-grid" id="ep-grid"></div>
+      </div>
+    </div>
+    <div class="f"><label>Shape</label>
+      <div style="display:flex;gap:5px">
+        <button class="btn" id="ss-circle"  onclick="sharedSetShape('circle')">Circle</button>
+        <button class="btn" id="ss-diamond" onclick="sharedSetShape('diamond')">Diamond</button>
+        <button class="btn" id="ss-lbl"     onclick="sharedSetShape('lbl')">Label</button>
       </div>
     </div>
   </div>
@@ -488,13 +498,6 @@ body {
   <div class="f"><label>Color</label><div class="cg" id="cg-pal"></div></div>
   <!-- Single-node bottom fields -->
   <div id="sb-single-bot">
-    <div class="f"><label>Shape</label>
-      <select id="ps" onchange="syncNode()" onfocus="sbFocus()">
-        <option value="circle">Circle</option>
-        <option value="diamond">Diamond</option>
-        <option value="lbl">Section Label</option>
-      </select>
-    </div>
     <div class="f" id="vf"><label>Video File</label><input id="pv" type="text" placeholder="videos/file.mp4" oninput="syncNode()" onfocus="sbFocus()"></div>
     <div class="sbb">
       <button class="btn" onclick="playSelected()">▶ Play</button>
@@ -644,6 +647,7 @@ let selId     = null;
 let selIds    = new Set();   // multi-selection
 let selConnId = null;        // selected connection
 let connFrom  = null;
+let _sbShape  = 'circle'; // tracks active shape in sidebar (shared between single/multi)
 let drag      = null;        // { id }  — single-node drag
 let groupDrag = null;        // { startCol, startRow, origins:{id:{col,row}} }
 let lasso     = null;        // { x0,y0,x1,y1 } in canvas px
@@ -930,11 +934,11 @@ function applyNode(el, n) {
   }
 
   // ── Circle or Diamond ──────────────────────────────────────────────────
-  const diam   = (n.shape === 'diamond') ? Math.round(nodeSize * 0.72) : nodeSize;
+  const diam   = (n.shape === 'diamond') ? Math.round(nodeSize * 0.62) : nodeSize;
   const iconFs = Math.max(10, Math.round(diam * 0.36));
   const lblFs  = Math.round(nodeSize * 0.34);
-  // Label sits just below the bottom edge of the circle
-  const lblTop = nodeSize + 5;
+  // Label sits just below the bottom edge of the shape
+  const lblTop = (n.shape === 'diamond' ? diam : nodeSize) + 5;
   const lblMaxW = nodeSize * 1.8;
 
   // Ball dimensions
@@ -988,6 +992,17 @@ function applyNode(el, n) {
   }
 }
 
+// Returns the horizontal/vertical edge reach (px) for a node based on its shape.
+function nodeEdgeR(n) {
+  if (n.shape === 'diamond') {
+    const diam = Math.round(nodeSize * 0.62);
+    const br = 6; // border-radius from CSS (.node.diamond .nb)
+    // Rotated square with rounded corners: visual tip = (halfSide - br)*√2 + br
+    return (diam / 2 - br) * Math.SQRT2 + br;
+  }
+  return NR;
+}
+
 function renderConns() {
   cg.innerHTML = '';
   S.conns.forEach(c => {
@@ -997,7 +1012,7 @@ function renderConns() {
 
     const p1 = g2p(fn.col, fn.row);
     const p2 = g2p(tn.col, tn.row);
-    const d = pathD(p1, p2);
+    const d = pathD(p1, p2, nodeEdgeR(fn), nodeEdgeR(tn));
     if (!d) return;
 
     const isSel  = c.id === selConnId;
@@ -1034,8 +1049,8 @@ function mkPath(d, attrs) {
 }
 
 // ── Connection path routing ────────────────────────────────────────────────
-// Orthogonal L-shape with rounded corners, snapped to circle edges.
-function pathD(p1, p2) {
+// Orthogonal L-shape with rounded corners, snapped to node edges.
+function pathD(p1, p2, r1 = NR, r2 = NR) {
   const dx = p2.x - p1.x;
   const dy = p2.y - p1.y;
   if (Math.abs(dx) < 2 && Math.abs(dy) < 2) return null;
@@ -1045,24 +1060,24 @@ function pathD(p1, p2) {
   const AR = ARROW_REACH; // arrowhead reach in px — single source of truth
 
   // ── Straight horizontal ──
-  if (Math.abs(dy) < NR * 0.6) {
-    const sx = p1.x + hd * NR, ex = p2.x - hd * (NR + AR);
+  if (Math.abs(dy) < Math.max(r1, r2) * 0.6) {
+    const sx = p1.x + hd * r1, ex = p2.x - hd * (r2 + AR);
     if (Math.abs(ex - sx) < 2) return null;
     return `M ${f(sx)} ${f(p1.y)} H ${f(ex)}`;
   }
 
   // ── Straight vertical ──
-  if (Math.abs(dx) < NR * 0.6) {
-    const sy = p1.y + vd * NR, ey = p2.y - vd * (NR + AR);
+  if (Math.abs(dx) < Math.max(r1, r2) * 0.6) {
+    const sy = p1.y + vd * r1, ey = p2.y - vd * (r2 + AR);
     if (Math.abs(ey - sy) < 2) return null;
     return `M ${f(p1.x)} ${f(sy)} V ${f(ey)}`;
   }
 
   // ── L-shape: exit horizontally, elbow, vertical, elbow, enter horizontally ──
-  // Source exits from the left or right edge of the circle
-  const sx = p1.x + hd * NR;
+  // Source exits from the left or right edge
+  const sx = p1.x + hd * r1;
   // Target is entered from left or right, leaving room for arrowhead
-  const ex = p2.x - hd * (NR + AR);
+  const ex = p2.x - hd * (r2 + AR);
 
   // midX is halfway between sx and ex
   const midX = (sx + ex) * 0.5;
@@ -1613,7 +1628,7 @@ function openSB(n) {
   document.getElementById('pl').value = n.label || '';
   document.getElementById('pi').value = n.icon  || '';
   document.getElementById('pv').value = n.videoFile || '';
-  document.getElementById('ps').value = n.shape || 'circle';
+  _sbShape = n.shape || 'circle'; _highlightShapeBtn(_sbShape);
   document.getElementById('vf').style.display = n.shape === 'lbl' ? 'none' : '';
   document.querySelectorAll('.cs').forEach((s,i) => s.classList.toggle('on', PAL[i]===n.color));
   updConnList(n.id);
@@ -1625,8 +1640,45 @@ function openMultiSB() {
   document.getElementById('sb-single-top').style.display = 'none';
   document.getElementById('sb-single-bot').style.display = 'none';
   document.getElementById('sb-multi-cnt').textContent = selIds.size + ' Nodes Selected';
+  document.getElementById('pi').value = '';
   document.querySelectorAll('.cs').forEach(s => s.classList.remove('on'));
+  _highlightShapeBtn(null);
   sb.classList.add('open');
+}
+
+function _highlightShapeBtn(shape) {
+  ['ss-circle','ss-diamond','ss-lbl'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.classList.remove('on');
+  });
+  const map = { circle:'ss-circle', diamond:'ss-diamond', lbl:'ss-lbl' };
+  if (shape && map[shape]) document.getElementById(map[shape]).classList.add('on');
+}
+
+function sharedSetShape(shape) {
+  _sbShape = shape;
+  _highlightShapeBtn(shape);
+  if (selIds.size > 1) {
+    pushUndo();
+    selIds.forEach(id => { const n = S.nodes.find(n => n.id === id); if (n) n.shape = shape; });
+    render(); autoSave();
+  } else if (selId) {
+    const n = S.nodes.find(n => n.id === selId);
+    if (n) {
+      pushUndo();
+      n.shape = shape;
+      document.getElementById('vf').style.display = shape === 'lbl' ? 'none' : '';
+      render(); autoSave();
+    }
+  }
+}
+
+function sharedIconInput(val) {
+  if (selIds.size > 1) {
+    selIds.forEach(id => { const n = S.nodes.find(n => n.id === id); if (n) n.icon = val; });
+    render(); autoSave();
+  } else {
+    syncNode();
+  }
 }
 
 function desel() { selId = null; selIds.clear(); selConnId = null; sb.classList.remove('open'); render(); }
@@ -1681,7 +1733,7 @@ function syncNode() {
     }
   }
   n.videoFile = newVideo;
-  n.shape     = document.getElementById('ps').value;
+  n.shape     = _sbShape;
   document.getElementById('vf').style.display = n.shape === 'lbl' ? 'none' : '';
   render(); autoSave();
 }
@@ -1716,7 +1768,7 @@ function toggleEmojiPicker(e) {
 function pickEmoji(em) {
   document.getElementById('pi').value = em;
   document.getElementById('emoji-picker').classList.remove('open');
-  syncNode();
+  sharedIconInput(em);
 }
 document.addEventListener('click', e => {
   const picker = document.getElementById('emoji-picker');
