@@ -853,13 +853,26 @@ function render() { renderConns(); renderNodes(); }
 
 function renderNodes() {
   const kept = new Set();
-  const _selNode = selId ? S.nodes.find(n => n.id === selId) : null;
+  const _selNode  = selId ? S.nodes.find(n => n.id === selId) : null;
   const _dupVideo = (_selNode && _selNode.videoFile) ? _selNode.videoFile : null;
+
+  // IDs of nodes the selected node connects OUT to
+  const _outIds = new Set();
+  // videoFile values of those outgoing nodes (for dup-highlighting)
+  const _outVideos = new Set();
+  if (selId) {
+    S.conns.filter(c => c.from === selId).forEach(c => {
+      _outIds.add(c.to);
+      const tn = S.nodes.find(n => n.id === c.to);
+      if (tn && tn.videoFile) _outVideos.add(tn.videoFile);
+    });
+  }
+
   S.nodes.forEach(n => {
     kept.add(n.id);
     let el = document.getElementById('nd-' + n.id);
     if (!el) { el = mkNode(n); nl.appendChild(el); }
-    applyNode(el, n, _dupVideo);
+    applyNode(el, n, _dupVideo, _outIds, _outVideos);
   });
   nl.querySelectorAll('.node').forEach(el => {
     if (!kept.has(el.dataset.id)) el.remove();
@@ -897,7 +910,7 @@ function mkNode(n) {
   return el;
 }
 
-function applyNode(el, n, _dupVideo = null) {
+function applyNode(el, n, _dupVideo = null, _outIds = null, _outVideos = null) {
   const { x, y } = g2p(n.col, n.row);
   el.style.left = x + 'px';
   el.style.top  = y + 'px';
@@ -978,10 +991,12 @@ function applyNode(el, n, _dupVideo = null) {
   ball.style.color       = c;
 
   // Selection / dup overrides border + box-shadow inline (CSS !important lost to inline style)
-  const isSel  = selId === n.id;
-  const isMsel = selIds.has(n.id);
-  const isDup  = (_dupVideo && n.videoFile === _dupVideo && n.id !== selId && !selIds.has(n.id));
-  if (isSel || isMsel || isDup) {
+  const isSel   = selId === n.id;
+  const isMsel  = selIds.has(n.id);
+  const isDup   = (_dupVideo && n.videoFile === _dupVideo && n.id !== selId && !selIds.has(n.id));
+  const isOut   = (_outIds   && _outIds.has(n.id));
+  const isOutDup= (!isSel && !isDup && !isOut && _outVideos && n.videoFile && _outVideos.has(n.videoFile));
+  if (isSel || isMsel || isDup || isOut || isOutDup) {
     ball.style.borderColor = '#fff';
     ball.style.boxShadow   = `0 0 ${glowR}px ${c}88, 0 0 ${glowR*2}px ${c}44, inset 0 0 ${Math.round(glowR*0.8)}px rgba(0,0,0,0.32), 0 0 8px 2px rgba(255,255,255,0.55)`;
   } else {
