@@ -201,7 +201,7 @@ body {
 #sb {
   position: fixed; top: 46px; right: 0; width: 265px; bottom: 0;
   background: var(--sb); border-left: 1px solid var(--bord);
-  padding: 13px; overflow-y: auto; z-index: 90;
+  padding: 13px; overflow-y: auto; overflow-x: hidden; z-index: 90;
   transform: translateX(100%); transition: transform 0.2s ease;
 }
 #sb.open { transform: translateX(0); }
@@ -223,6 +223,42 @@ body {
 .cs.on { border-color: #fff; transform: scale(1.12); }
 .sbb { display: flex; gap: 6px; margin-top: 12px; }
 .sbb .btn { flex: 1; text-align: center; }
+
+/* ── Emoji picker ────────────────────────────────────────────────────────── */
+.icon-field { position: relative; }
+.icon-row { display: flex; gap: 5px; align-items: center; }
+.icon-row input { flex: 1; }
+.emoji-toggle {
+  flex-shrink: 0; background: rgba(74,143,217,0.07);
+  border: 1px solid rgba(74,143,217,0.3); border-radius: 5px;
+  color: var(--text); cursor: pointer; font-size: 14px;
+  padding: 6px 7px; line-height: 1; transition: background 0.13s;
+  align-self: stretch;
+}
+.emoji-toggle:hover { background: rgba(74,143,217,0.2); }
+#emoji-picker {
+  display: none; position: absolute; top: calc(100% + 6px); right: 0;
+  background: var(--sb); border: 1px solid var(--bord);
+  border-radius: 8px; padding: 8px; z-index: 200;
+  width: 212px; max-width: 100%; box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  max-height: 38vh; overflow-y: auto; overflow-x: hidden;
+  scrollbar-width: thin; scrollbar-color: rgba(74,143,217,0.3) transparent;
+  overscroll-behavior: contain;
+}
+#emoji-picker::-webkit-scrollbar { width: 4px; }
+#emoji-picker::-webkit-scrollbar-track { background: transparent; }
+#emoji-picker::-webkit-scrollbar-thumb { background: rgba(74,143,217,0.3); border-radius: 2px; }
+#emoji-picker.open { display: block; }
+.ep-grid {
+  display: grid; grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 4px;
+}
+.ep-btn {
+  background: none; border: none; cursor: pointer;
+  font-size: 16px; padding: 4px 2px; border-radius: 4px;
+  line-height: 1; text-align: center; transition: background 0.1s;
+}
+.ep-btn:hover { background: rgba(74,143,217,0.2); }
 .ce { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; font-size: 10px; border-bottom: 1px solid rgba(255,255,255,0.04); }
 .ce:last-child { border: none; }
 .cdel { background: none; border: none; color: var(--dim); cursor: pointer; font-size: 12px; }
@@ -437,7 +473,15 @@ body {
   <div id="sb-single-top">
     <h3>Node Properties</h3>
     <div class="f"><label>Label</label><input id="pl" type="text" placeholder="Name" oninput="syncNode()" onfocus="sbFocus()"></div>
-    <div class="f"><label>Icon (emoji)</label><input id="pi" type="text" placeholder="🧠" maxlength="2" oninput="syncNode()" onfocus="sbFocus()"></div>
+    <div class="f icon-field"><label>Icon (emoji)</label>
+      <div class="icon-row">
+        <input id="pi" type="text" placeholder="🧠" maxlength="2" oninput="syncNode()" onfocus="sbFocus()">
+        <button class="emoji-toggle" onclick="toggleEmojiPicker(event)" title="Emoji picker">🎥</button>
+      </div>
+      <div id="emoji-picker">
+        <div class="ep-grid" id="ep-grid"></div>
+      </div>
+    </div>
   </div>
   <!-- Shared color palette -->
   <div class="f"><label>Color</label><div class="cg" id="cg-pal"></div></div>
@@ -1555,6 +1599,45 @@ function syncNode() {
   document.getElementById('vf').style.display = n.shape === 'lbl' ? 'none' : '';
   render(); autoSave();
 }
+
+// ── Emoji picker ───────────────────────────────────────────────────────────
+const _EMOJIS = [
+  '👍','👎','👏','🙌','🤝','✌️','👋','🤜','💪','🫶','❤️','💔',
+  '⭐','🌟','✨','🔥','💥','⚡','🎯','🎲','🎮','🏆','🥇','🎪',
+  '🧠','💡','📚','📖','🔬','🔭','💻','📱','🎵','🎶','🎸','🎹',
+  '🌈','🌙','☀️','🌊','🌿','🌸','🍀','🦋','🐉','🦁','🐺','🦊',
+  '⚔️','🛡️','🗡️','🏹','🔮','💎','👑','🎭','🎨','🖌️','✏️','📝',
+  '▶️','⏸️','⏭️','🔊','🔇','📡','🔑','🔒','🔓','⚙️','🛠️','💾',
+  '❓','❗','💬','💭','🗯️','📢','🚀','🛸','🌍','🗺️','🧭','🏔️',
+];
+
+(function _buildEmojiGrid() {
+  const grid = document.getElementById('ep-grid');
+  if (!grid) return;
+  _EMOJIS.forEach(em => {
+    const b = document.createElement('button');
+    b.className = 'ep-btn'; b.textContent = em;
+    b.onclick = () => { pickEmoji(em); };
+    grid.appendChild(b);
+  });
+})();
+
+function toggleEmojiPicker(e) {
+  e.stopPropagation();
+  const picker = document.getElementById('emoji-picker');
+  picker.classList.toggle('open');
+}
+function pickEmoji(em) {
+  document.getElementById('pi').value = em;
+  document.getElementById('emoji-picker').classList.remove('open');
+  syncNode();
+}
+document.addEventListener('click', e => {
+  const picker = document.getElementById('emoji-picker');
+  if (picker && !picker.contains(e.target) && !e.target.classList.contains('emoji-toggle')) {
+    picker.classList.remove('open');
+  }
+});
 
 function pickCol(c) {
   pushUndo();
