@@ -1839,7 +1839,8 @@ async function generateMissingNodes() {
     if (existingPaths.has(fullPath)) continue;
     const fname  = relPath.includes('/') ? relPath.slice(relPath.lastIndexOf('/') + 1) : relPath;
     const folder = relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : '';
-    const title  = fname.lastIndexOf('.') >= 0 ? fname.slice(0, fname.lastIndexOf('.')) : fname;
+    const rawTitle = fname.lastIndexOf('.') >= 0 ? fname.slice(0, fname.lastIndexOf('.')) : fname;
+    const title  = rawTitle.replace(/^[\d.]+\s+/, '');
     toPlace.push({ relPath, fullPath, folder, title });
   }
 
