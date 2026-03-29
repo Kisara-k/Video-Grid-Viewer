@@ -371,6 +371,7 @@ body {
   <div class="tsep"></div>
   <button class="btn on"  id="bv" onclick="setMode('view')">View</button>
   <button class="btn"     id="bn" onclick="setMode('node')">✎ Edit</button>
+  <button class="btn"     id="ba" onclick="setMode('addnode')">+ Node</button>
   <button class="btn"     id="bc" onclick="setMode('conn')">→ Connect</button>
   <button class="btn red" id="bd" onclick="setMode('del')">✕ Delete</button>
   <div class="tsep"></div>
@@ -575,7 +576,8 @@ const PAL = [
 
 const HINTS = {
   view:'Click node → play video  |  Drag to reposition',
-  node:'Click grid intersection to place a node',
+  node:'Click a node to select and edit it',
+  addnode:'Click grid intersection to place a node',
   lbl: 'Click grid to place a section label',
   conn:'Click source node then target node',
   del: 'Click a node or connection to delete it',
@@ -832,12 +834,12 @@ function setMode(m) {
   mode = m; connFrom = null;
   selIds.clear();
   tl.setAttribute('display', 'none');
-  ['bv','bn','bl','bc','bd'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.remove('on'); });
-  const map = { view:'bv', node:'bn', lbl:'bl', conn:'bc', del:'bd' };
+  ['bv','bn','ba','bl','bc','bd'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.remove('on'); });
+  const map = { view:'bv', node:'bn', addnode:'ba', lbl:'bl', conn:'bc', del:'bd' };
   if (map[m]) document.getElementById(map[m]).classList.add('on');
   document.getElementById('hint').textContent = HINTS[m] || '';
-  canvas.style.cursor = (m === 'node' || m === 'lbl') ? 'crosshair' : (m === 'view' ? 'grab' : 'default');
-  if (m !== 'node' && m !== 'lbl') ghost.style.display = 'none';
+  canvas.style.cursor = (m === 'addnode' || m === 'lbl') ? 'crosshair' : (m === 'view' || m === 'node' ? 'grab' : 'default');
+  if (m !== 'addnode' && m !== 'lbl') ghost.style.display = 'none';
   renderNodes();
 }
 
@@ -933,7 +935,7 @@ function applyNode(el, n) {
   const lblFs  = Math.round(nodeSize * 0.34);
   // Label sits just below the bottom edge of the circle
   const lblTop = nodeSize + 5;
-  const lblMaxW = nodeSize * 1.7;
+  const lblMaxW = nodeSize * 1.8;
 
   // Ball dimensions
   ball.style.width  = diam + 'px';
@@ -1122,9 +1124,9 @@ function setupEv() {
 
 function updateSelCursor(e) {
   const held = e.shiftKey || e.ctrlKey || e.metaKey;
-  if (mode === 'view') {
+  if (mode === 'view' || mode === 'node') {
     canvas.style.cursor = held ? 'crosshair' : (pan ? 'grabbing' : 'grab');
-  } else if (mode === 'node' || mode === 'lbl') {
+  } else if (mode === 'addnode' || mode === 'lbl') {
     canvas.style.cursor = 'crosshair';
   } else {
     canvas.style.cursor = held ? 'crosshair' : 'default';
@@ -1141,8 +1143,8 @@ function onCvDown(e) {
     lasso = { x0: x, y0: y, x1: x, y1: y };
     document.getElementById('sel-rect').style.display = 'block';
     updateLassoRect();
-  } else if (mode === 'view') {
-    // Plain drag in view mode → pan viewport
+  } else if (mode === 'view' || mode === 'node') {
+    // Plain drag in view/edit mode → pan viewport
     pan = { startSL: cw.scrollLeft, startST: cw.scrollTop, startX: e.clientX, startY: e.clientY, moved: false };
     canvas.style.cursor = 'grabbing';
     const mv = me => {
@@ -1168,7 +1170,7 @@ function onCvClick(e) {
   if (e.target.closest('.node')) return;
   if (drag || groupDrag) return;
   if (_skipNextCvClick) { _skipNextCvClick = false; return; }
-  if (mode === 'node' || mode === 'lbl') {
+  if (mode === 'addnode' || mode === 'lbl') {
     const { col, row } = mGrid(e);
     addNode(col, row, mode === 'lbl');
   }
@@ -1177,7 +1179,7 @@ function onCvClick(e) {
 }
 
 function onCvMove(e) {
-  if (mode === 'node' || mode === 'lbl') {
+  if (mode === 'addnode' || mode === 'lbl') {
     const { col, row } = mGrid(e);
     const { x, y } = g2p(col, row);
     ghost.style.left = x + 'px'; ghost.style.top = y + 'px'; ghost.style.display = 'block';
@@ -1301,11 +1303,13 @@ function onNClick(id, e) {
 
   if (mode === 'view') {
     if (n.videoFile) openVid(n); else { selId=id; openSB(n); }
-  } else if (mode === 'node' || mode === 'lbl') {
+  } else if (mode === 'node' || mode === 'lbl' || mode === 'addnode') {
     selId = id; openSB(n);
   } else if (mode === 'conn') {
     if (!connFrom) { connFrom = id; selId = id; openSB(n); showToast('Click target node'); renderNodes(); }
-    else if (connFrom !== id) {
+    else if (connFrom === id) {
+      connFrom = null; tl.setAttribute('display','none'); renderNodes();
+    } else {
       addConn(connFrom, id);
       connFrom = null; tl.setAttribute('display','none');
       selId = id; openSB(n); renderNodes();
@@ -1949,7 +1953,7 @@ document.getElementById('vol').addEventListener('wheel', e => {
 
 // ── File I/O ───────────────────────────────────────────────────────────────
 async function _getJsonHandle(dirHandle, create) {
-  try { return await dirHandle.getFileHandle('.grid-viewer.json.json', { create }); } catch { return null; }
+  try { return await dirHandle.getFileHandle('.grid-viewer.json', { create }); } catch { return null; }
 }
 
 async function autoSave() {
@@ -1975,7 +1979,7 @@ async function autoSave() {
 
 function doExport() {
   const blob = new Blob([JSON.stringify({S, UID, view: viewState()},null,2)], {type:'application/json'});
-  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: '.grid-viewer.json.json' });
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: '.grid-viewer.json' });
   a.click(); URL.revokeObjectURL(a.href);
   showToast('Exported');
 }
