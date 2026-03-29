@@ -380,7 +380,7 @@ body {
   <button class="btn" onclick="doLoad()">📂 Load</button>
   <button class="btn" onclick="doExport()">↑ Export</button>
   <button class="btn" onclick="generateMissingNodes()">⬇ Generate Nodes</button>
-  <button class="btn" id="folder-lbl" title="Change videos folder" onclick="changeVideoDir()">📁 Not set</button>
+  <button class="btn" id="folder-lbl" title="Change videos folder" onclick="changeVideoDir()">📁 videos</button>
   <button class="btn red" onclick="clearAll()">Clear</button>
   <div class="tsep"></div>
   <div class="zgroup">
@@ -621,6 +621,12 @@ let   ARROW_REACH = NR * AR_SCALE; // updated whenever NR changes
 
 // File System API handle for direct file save
 let fileHandle = null;
+
+// Default video directory name (used as path prefix for node videoFile paths)
+let _videoDirName = localStorage.getItem('gv_dirName') || 'videos';
+
+// Tracks the current blob URL so it can be revoked when the player closes
+let _currentBlobUrl = null;
 
 // Duration cache
 const durCache = {};
@@ -1359,9 +1365,11 @@ function showTT(n, e) {
     if (durCache[n.videoFile] !== undefined) {
       document.getElementById('tt-dur-v').textContent = fmtDur(durCache[n.videoFile]);
     } else {
-      probeDur(n.videoFile, d => {
-        durCache[n.videoFile] = d;
-        if (ttNodeId === n.id) document.getElementById('tt-dur-v').textContent = fmtDur(d);
+      _resolveVideoSrc(n.videoFile).then(src => {
+        probeDur(src, d => {
+          durCache[n.videoFile] = d;
+          if (ttNodeId === n.id) document.getElementById('tt-dur-v').textContent = fmtDur(d);
+        });
       });
     }
     document.getElementById('tt-play').style.display = '';
@@ -1480,7 +1488,7 @@ function openSB(n) {
   document.getElementById('sb-single-bot').style.display = '';
   document.getElementById('pl').value = n.label || '';
   document.getElementById('pi').value = n.icon  || '';
-  document.getElementById('pv').value = n.videoFile || '';
+  document.getElementById('pv').value = (n.videoFile || '').replace(new RegExp('^' + _videoDirName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/'), '');
   document.getElementById('ps').value = n.shape || 'circle';
   document.getElementById('vf').style.display = n.shape === 'lbl' ? 'none' : '';
   document.querySelectorAll('.cs').forEach((s,i) => s.classList.toggle('on', PAL[i]===n.color));
@@ -1539,7 +1547,8 @@ function syncNode() {
   if (!n) return;
   n.label     = document.getElementById('pl').value;
   n.icon      = document.getElementById('pi').value || '●';
-  const newVideo = document.getElementById('pv').value;
+  const rawVideo = document.getElementById('pv').value;
+  const newVideo = rawVideo && !rawVideo.startsWith(_videoDirName + '/') ? _videoDirName + '/' + rawVideo : rawVideo;
   // Enforce uniqueness: one video path may only be linked to one node
   if (newVideo && newVideo !== n.videoFile) {
     const existing = S.nodes.find(o => o.id !== selId && o.videoFile === newVideo);
@@ -1698,12 +1707,15 @@ document.getElementById('vm-notes-txt').addEventListener('input', () => {
   if (vmNode) { vmNode.notes = document.getElementById('vm-notes-txt').value; autoSave(); }
 });
 
-function openVid(n) {
+async function openVid(n) {
   if (!n.videoFile) { showToast('No video file set'); return; }
   vmNode = n;
   document.getElementById('vm-title').textContent = n.label||'Video';
   document.getElementById('vm-notes-txt').value = n.notes || '';
-  document.getElementById('vs').src = n.videoFile;
+  if (_currentBlobUrl) { URL.revokeObjectURL(_currentBlobUrl); _currentBlobUrl = null; }
+  const src = await _resolveVideoSrc(n.videoFile);
+  if (src.startsWith('blob:')) _currentBlobUrl = src;
+  document.getElementById('vs').src = src;
   const vp = document.getElementById('vp');
   vp.load();
   vp.playbackRate = defaultSpeed;
@@ -1744,6 +1756,7 @@ function closeVid() {
   document.getElementById('vp').pause();
   document.getElementById('vm').classList.add('hidden');
   document.getElementById('vs').src = '';
+  if (_currentBlobUrl) { URL.revokeObjectURL(_currentBlobUrl); _currentBlobUrl = null; }
 }
 document.getElementById('vm').addEventListener('click', e => {
   if (e.target===document.getElementById('vm')) closeVid();
@@ -1905,13 +1918,38 @@ async function _loadHandle() {
 }
 
 function _setFolderLabel(name) {
+  if (name) {
+    _videoDirName = name;
+    try { localStorage.setItem('gv_dirName', name); } catch(_) {}
+  }
   const el = document.getElementById('folder-lbl');
-  if (el) el.textContent = name ? `📁 ${name}` : '📁 Not set';
+  if (el) el.textContent = `📁 ${_videoDirName}`;
 }
 
 async function _initFolderLabel() {
   const h = await _loadHandle().catch(() => null);
   _setFolderLabel(h ? h.name : null);
+}
+
+// Resolves a stored videoFile path to a blob URL via the directory handle.
+// Falls back to the raw string if no handle is available.
+async function _resolveVideoSrc(videoFile) {
+  const handle = await _loadHandle().catch(() => null);
+  if (!handle) return videoFile;
+  const prefix = _videoDirName + '/';
+  const relPath = videoFile.startsWith(prefix) ? videoFile.slice(prefix.length) : videoFile;
+  const parts = relPath.split('/');
+  let current = handle;
+  try {
+    for (let i = 0; i < parts.length - 1; i++) {
+      current = await current.getDirectoryHandle(parts[i]);
+    }
+    const fh = await current.getFileHandle(parts[parts.length - 1]);
+    const file = await fh.getFile();
+    return URL.createObjectURL(file);
+  } catch(e) {
+    return videoFile;
+  }
 }
 
 // Returns a directory handle, reusing the stored one.
@@ -1928,7 +1966,7 @@ async function _getVideoDir(forceNew) {
   }
   if (!handle) {
     try {
-      handle = await window.showDirectoryPicker({ mode: 'read' });
+      handle = await window.showDirectoryPicker({ mode: 'read', startIn: 'videos' });
       await _saveHandle(handle);
     } catch(e) {
       if (e.name !== 'AbortError') showToast('Could not open folder');
@@ -1970,7 +2008,7 @@ async function generateMissingNodes() {
 
   found.sort((a, b) => a.localeCompare(b));
 
-  const dirName = dirHandle.name;
+  const dirName = _videoDirName;
   const existingPaths = new Set(S.nodes.filter(n => n.videoFile).map(n => n.videoFile));
 
   let added = 0;
