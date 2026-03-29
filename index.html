@@ -1774,34 +1774,100 @@ async function generateMissingNodes() {
     await collectFiles(dirHandle, '');
   } catch(e) { showToast('Error reading folder'); console.error(e); return; }
 
+  found.sort((a, b) => a.localeCompare(b));
+
   const dirName = dirHandle.name;
   const existingPaths = new Set(S.nodes.filter(n => n.videoFile).map(n => n.videoFile));
 
   let added = 0;
+  const newByFolder = {};   // folderKey → [{relPath, node}]
+
+  // Pre-group filtered files by folder (found is already sorted, so folders are contiguous)
+  const toPlace = [];
   for (const relPath of found) {
     const fullPath = `${dirName}/${relPath}`;
     if (existingPaths.has(fullPath)) continue;
+    const fname  = relPath.includes('/') ? relPath.slice(relPath.lastIndexOf('/') + 1) : relPath;
+    const folder = relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : '';
+    const title  = fname.lastIndexOf('.') >= 0 ? fname.slice(0, fname.lastIndexOf('.')) : fname;
+    toPlace.push({ relPath, fullPath, folder, title });
+  }
 
-    const spot = findFreeSpot();
-    if (!spot) break;
+  // Snapshot occupied rows BEFORE placement; updated as we place
+  const occupiedRowSet = new Set(S.nodes.map(n => n.row));
 
-    const fname = relPath.includes('/') ? relPath.slice(relPath.lastIndexOf('/') + 1) : relPath;
-    const title = fname.lastIndexOf('.') >= 0 ? fname.slice(0, fname.lastIndexOf('.')) : fname;
+  // Return first even row >= fromRow that is not in occupiedRowSet, expanding CH if needed
+  function nextFreeRow(fromRow) {
+    let r = fromRow % 2 === 0 ? fromRow : fromRow + 1;
+    while (occupiedRowSet.has(r)) r += 2;
+    while (CH <= r + 2) { CH++; }
+    return r;
+  }
 
-    S.nodes.push({
-      id: nid(), col: spot.col, row: spot.row,
-      label: title,
+  // Assign a consistent color per folder
+  const folderColors = {};
+  let palIdx = 0;
+  for (const item of toPlace) {
+    if (!(item.folder in folderColors)) {
+      folderColors[item.folder] = PAL[palIdx % PAL.length];
+      palIdx++;
+    }
+  }
+
+  let curFolder = null;
+  let curRow    = nextFreeRow(2);   // find first free even row from the top
+  let curCol    = 2;
+  occupiedRowSet.add(curRow);       // reserve it immediately
+
+  for (const item of toPlace) {
+    // New folder → move to a fresh free row
+    if (item.folder !== curFolder) {
+      if (curFolder !== null) {
+        curRow = nextFreeRow(curRow + 2);
+        occupiedRowSet.add(curRow);
+      }
+      curFolder = item.folder;
+      curCol    = 2;
+    }
+
+    // Ran off the right edge → wrap to next free row
+    if (curCol >= CW - 1) {
+      curRow = nextFreeRow(curRow + 2);
+      occupiedRowSet.add(curRow);
+      curCol = 2;
+    }
+
+    document.getElementById('grows').value = CH;
+
+    const node = {
+      id: nid(), col: curCol, row: curRow,
+      label: item.title,
       icon: '▶',
-      color: PAL[Math.floor(Math.random() * PAL.length)],
+      color: folderColors[item.folder],
       shape: 'circle',
-      videoFile: fullPath,
+      videoFile: item.fullPath,
       notes: '',
-    });
+    };
+    S.nodes.push(node);
+    if (!newByFolder[item.folder]) newByFolder[item.folder] = [];
+    newByFolder[item.folder].push({ relPath: item.relPath, node });
+    curCol += 2;
     added++;
   }
 
+  // Create linear connections between new nodes in the same folder, sorted alphabetically
+  for (const group of Object.values(newByFolder)) {
+    group.sort((a, b) => a.relPath.localeCompare(b.relPath));
+    for (let i = 0; i < group.length - 1; i++) {
+      const from = group[i].node.id;
+      const to   = group[i + 1].node.id;
+      const fn   = group[i].node;
+      S.conns.push({ id: cid(), from, to, dashed: false, label: '', color: fn.color + '88' });
+    }
+  }
+
   if (added > 0) {
-    render(); autoSave(); showToast(`Added ${added} node${added > 1 ? 's' : ''}`);
+    sizeCanvas(); render(); autoSave(); showToast(`Added ${added} node${added > 1 ? 's' : ''}`);
   } else {
     showToast('No new videos to add');
   }
@@ -1848,9 +1914,10 @@ function finalizeLasso() {
   renderNodes();
 }
 
-function findFreeSpot() {  const used = new Set(S.nodes.map(n => `${n.col},${n.row}`));
-  for (let row = 2; row < CH - 1; row++) {
-    for (let col = 2; col < CW - 1; col++) {
+function findFreeSpot(step = 1) {
+  const used = new Set(S.nodes.map(n => `${n.col},${n.row}`));
+  for (let row = 2; row < CH - 1; row += step) {
+    for (let col = 2; col < CW - 1; col += step) {
       if (!used.has(`${col},${row}`)) return { col, row };
     }
   }
