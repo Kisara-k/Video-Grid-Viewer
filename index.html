@@ -372,7 +372,7 @@ body {
   <div class="tsep"></div>
   <div class="zgroup">
     <label>⬤</label>
-    <input type="range" id="nsize" min="18" max="120" step="2" value="54" oninput="setNodeSize(+this.value)">
+    <input type="range" id="nsize" min="18" max="120" step="2" value="30" oninput="setNodeSize(+this.value)">
     <span id="nsizev">54px</span>
   </div>
   <div class="tsep"></div>
@@ -519,11 +519,11 @@ body {
 'use strict';
 
 // ── Constants / mutable view settings ─────────────────────────────────────
-const GS = 80;      // grid cell size px (base, never changes)
+const GS = 40;      // grid cell size px (base, never changes)
 let CW       = 52;  // grid columns  (editable)
 let CH       = 34;  // grid rows     (editable)
-let nodeSize = 54;  // node diameter px (editable)
-let NR       = 27;  // node radius = nodeSize/2 (derived, kept in sync)
+let nodeSize = 30;  // node diameter px (editable)
+let NR       = 15;  // node radius = nodeSize/2 (derived, kept in sync)
 
 const PAL = [
   '#ff6b6b','#ff9f43','#ffd32a','#ffeaa7',
@@ -883,10 +883,10 @@ function applyNode(el, n) {
   // ── Circle or Diamond ──────────────────────────────────────────────────
   const diam   = (n.shape === 'diamond') ? Math.round(nodeSize * 0.72) : nodeSize;
   const iconFs = Math.max(10, Math.round(diam * 0.36));
-  const lblFs  = Math.round(nodeSize * 0.26);
+  const lblFs  = Math.round(nodeSize * 0.34);
   // Label sits just below the bottom edge of the circle
   const lblTop = nodeSize + 5;
-  const lblMaxW = nodeSize * 1.5;
+  const lblMaxW = nodeSize * 1.7;
 
   // Ball dimensions
   ball.style.width  = diam + 'px';
