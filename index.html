@@ -766,6 +766,23 @@ function renderNodes() {
   });
 }
 
+// Splits label text for 2-line display: line 1 at word boundary, line 2 remainder.
+let _lblCtx;
+function splitLabel(text, maxW, fontSize) {
+  if (!_lblCtx) _lblCtx = document.createElement('canvas').getContext('2d');
+  _lblCtx.font = `500 ${fontSize}px 'Segoe UI', system-ui, sans-serif`;
+  const words = text.split(' ');
+  let line1 = '';
+  for (let i = 0; i < words.length; i++) {
+    const candidate = line1 ? line1 + ' ' + words[i] : words[i];
+    if (_lblCtx.measureText(candidate).width > maxW && line1 !== '') {
+      return [line1, text.slice(line1.length + 1)];
+    }
+    line1 = candidate;
+  }
+  return [text, ''];
+}
+
 function mkNode(n) {
   const el = document.createElement('div');
   el.className = 'node';
@@ -844,13 +861,14 @@ function applyNode(el, n) {
   lbl.style.transform = 'translateX(-50%)';
   lbl.style.marginTop = '';
 
-  // 2-line wrap with clamp (always)
-  lbl.style.whiteSpace = 'normal';
-  lbl.style.overflow   = 'hidden';
+  // 2-line wrap: line 1 at word boundary, line 2 character-level ellipsis
+  lbl.style.display      = 'block';
+  lbl.style.overflow     = 'hidden';
+  lbl.style.whiteSpace   = 'normal';
   lbl.style.textOverflow = 'clip';
-  lbl.style.display    = '-webkit-box';
-  lbl.style.setProperty('-webkit-line-clamp', '2');
-  lbl.style.setProperty('-webkit-box-orient', 'vertical');
+  lbl.style.wordBreak    = '';
+  lbl.style.removeProperty('-webkit-line-clamp');
+  lbl.style.removeProperty('-webkit-box-orient');
 
   // Colours & glow
   const c = n.color || '#a29bfe';
@@ -860,7 +878,21 @@ function applyNode(el, n) {
   ball.style.boxShadow   = `0 0 ${glowR}px ${c}88, 0 0 ${glowR*2}px ${c}44, inset 0 0 ${Math.round(glowR*0.8)}px rgba(0,0,0,0.32)`;
   ball.style.color       = c;
   icon.textContent = n.icon || '●';
-  lbl.textContent  = n.label || '';
+
+  // Build two-line label
+  lbl.innerHTML = '';
+  const labelText = n.label || '';
+  const [l1, l2] = splitLabel(labelText, lblMaxW, lblFs);
+  const s1 = document.createElement('span');
+  s1.style.cssText = 'display:block;white-space:nowrap;overflow:hidden';
+  s1.textContent = l1;
+  lbl.appendChild(s1);
+  if (l2) {
+    const s2 = document.createElement('span');
+    s2.style.cssText = 'display:block;white-space:nowrap;overflow:hidden';
+    s2.textContent = l2;
+    lbl.appendChild(s2);
+  }
 }
 
 function renderConns() {
