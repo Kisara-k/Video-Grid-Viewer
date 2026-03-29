@@ -245,11 +245,18 @@ body {
   border-bottom: 1px solid var(--bord);
 }
 #vm-spd {
-  display: flex; align-items: center; gap: 7px; margin-left: auto; flex-shrink: 0;
+  display: flex; align-items: center; gap: 7px; flex-shrink: 0;
 }
 #vm-spd label { font-size: 11px; color: var(--dim); white-space: nowrap; }
 #vm-spd input[type=range] { width: 90px; height: 4px; accent-color: var(--acc); cursor: pointer; }
 #vm-spd span { font-size: 11px; color: var(--text); min-width: 38px; text-align: right; white-space: nowrap; }
+#vm-vol {
+  display: flex; align-items: center; gap: 7px; flex-shrink: 0; margin-left: auto;
+}
+#vm-vol label { font-size: 11px; color: var(--dim); white-space: nowrap; }
+#vm-vol input[type=range] { width: 72px; height: 4px; accent-color: var(--acc); cursor: pointer; }
+#vm-vol span { font-size: 11px; color: var(--text); min-width: 30px; text-align: right; white-space: nowrap; }
+.vm-sep { width: 1px; height: 20px; background: var(--bord); flex-shrink: 0; }
 #vm-title { font-size: 13px; font-weight: 600; }
 #vm-close { background: none; border: none; color: var(--dim); cursor: pointer; font-size: 17px; padding: 2px 6px; }
 #vm-close:hover { color: #fff; }
@@ -437,6 +444,12 @@ body {
   <div id="vm-box">
     <div id="vm-hdr">
       <span id="vm-title"></span>
+      <div id="vm-vol">
+        <label>🔊</label>
+        <input type="range" id="vol" min="0" max="1" step="0.01" value="1" oninput="setVolume(+this.value)">
+        <span id="volv">100%</span>
+      </div>
+      <div class="vm-sep"></div>
       <div id="vm-spd">
         <label>▶ Speed</label>
         <input type="range" id="spd2" min="0" max="100" step="0.5" value="25.5" oninput="setSpeedPos(+this.value)">
@@ -1596,6 +1609,15 @@ function spdToPos(spd) {
   return 60 + Math.log2(spd / 2.0) * 40;
 }
 
+function setVolume(val) {
+  val = Math.min(1, Math.max(0, val));
+  const vp = document.getElementById('vp');
+  const slider = document.getElementById('vol');
+  vp.volume = val;
+  slider.value = val;
+  document.getElementById('volv').textContent = Math.round(val * 100) + '%';
+}
+
 function setSpeedPos(pos) {
   const spd = posToSpd(pos);
   defaultSpeed = spd;
@@ -1656,10 +1678,23 @@ document.getElementById('vm').addEventListener('click', e => {
   if (e.target===document.getElementById('vm')) closeVid();
 });
 document.getElementById('vm').addEventListener('wheel', e => {
-  if (!e.ctrlKey) return;
+  if (e.ctrlKey) {
+    e.preventDefault();
+    vmScale = Math.max(0.2, vmScale + (e.deltaY < 0 ? 0.08 : -0.08));
+    _applyVmScale();
+    return;
+  }
+  // Scroll anywhere on video modal → volume
   e.preventDefault();
-  vmScale = Math.max(0.2, vmScale + (e.deltaY < 0 ? 0.08 : -0.08));
-  _applyVmScale();
+  const step = 0.05;
+  const cur = parseFloat(document.getElementById('vol').value);
+  setVolume(cur + (e.deltaY < 0 ? step : -step));
+}, { passive: false });
+document.getElementById('vol').addEventListener('wheel', e => {
+  e.preventDefault();
+  const step = 0.05;
+  const cur = parseFloat(document.getElementById('vol').value);
+  setVolume(cur + (e.deltaY < 0 ? step : -step));
 }, { passive: false });
 
 // ── File I/O ───────────────────────────────────────────────────────────────
