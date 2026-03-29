@@ -1714,16 +1714,10 @@ async function openVid(n) {
   vp.playbackRate = defaultSpeed;
   const applySpeed = () => { vp.playbackRate = defaultSpeed; vp.removeEventListener('canplay', applySpeed); };
   vp.addEventListener('canplay', applySpeed);
-  // Compute base height once intrinsic dimensions are known, then apply scale
+  // Set base height to a fixed target (68vh) regardless of native video size
   const onMeta = () => {
     vp.removeEventListener('loadedmetadata', onMeta);
-    const maxH = window.innerHeight * 0.68; // 68vh in px
-    const aspect = vp.videoWidth / vp.videoHeight;
-    const fitH = Math.min(vp.videoHeight, maxH);
-    const fitW = fitH * aspect;
-    // also cap by viewport width with some padding
-    const maxW = window.innerWidth * 0.95;
-    vmBaseH = fitW > maxW ? maxW / aspect : fitH;
+    vmBaseH = window.innerHeight * 0.68;
     _applyVmScale();
   };
   vp.addEventListener('loadedmetadata', onMeta);
