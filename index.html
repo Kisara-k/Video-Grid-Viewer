@@ -131,8 +131,9 @@ body {
   pointer-events: none; text-align: center;
 }
 .node:hover .nb { transform: scale(1.12); }
-.node.sel .nb   { border-color: rgba(255,255,255,0.85) !important; }
-.node.msel .nb  { border-color: rgba(255,220,60,0.9) !important; }
+.node.sel .nb   { border-color: #fff !important; }
+.node.msel .nb  { border-color: #fff !important; }
+.node.dup .nb   { border-color: #fff !important; }
 .node.csrc .nb  { animation: pulse 0.85s ease-in-out infinite; }
 @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.16); } }
 
@@ -553,7 +554,7 @@ body {
 <div id="help">
   <b>V</b> View &nbsp;<b>N</b> Node &nbsp;<b>C</b> Connect &nbsp;<b>D</b> Delete<br>
   <b>Drag</b> Pan &nbsp;<b>Shift+Drag</b> Lasso &nbsp;<b>Shift+Click</b> Multi-select<br>
-  <b>Ctrl+A</b> Select All &nbsp;<b>Ctrl+Z</b> Undo &nbsp;<b>Ctrl+Shift+Z</b> Redo<br>
+  <b>Ctrl+A</b> Select All &nbsp;<b>Ctrl+Z</b> Undo &nbsp;<b>Ctrl+Shift+Z</b> Redo &nbsp;<b>Ctrl+C/V</b> Copy/Paste<br>
   <b>Ctrl+Scroll</b> Zoom &nbsp;|&nbsp; Hover node → tooltip
 </div>
 
@@ -852,11 +853,13 @@ function render() { renderConns(); renderNodes(); }
 
 function renderNodes() {
   const kept = new Set();
+  const _selNode = selId ? S.nodes.find(n => n.id === selId) : null;
+  const _dupVideo = (_selNode && _selNode.videoFile) ? _selNode.videoFile : null;
   S.nodes.forEach(n => {
     kept.add(n.id);
     let el = document.getElementById('nd-' + n.id);
     if (!el) { el = mkNode(n); nl.appendChild(el); }
-    applyNode(el, n);
+    applyNode(el, n, _dupVideo);
   });
   nl.querySelectorAll('.node').forEach(el => {
     if (!kept.has(el.dataset.id)) el.remove();
@@ -894,7 +897,7 @@ function mkNode(n) {
   return el;
 }
 
-function applyNode(el, n) {
+function applyNode(el, n, _dupVideo = null) {
   const { x, y } = g2p(n.col, n.row);
   el.style.left = x + 'px';
   el.style.top  = y + 'px';
@@ -904,7 +907,8 @@ function applyNode(el, n) {
     + (n.shape === 'lbl'     ? ' lbl'     : '')
     + (selId === n.id        ? ' sel'     : '')
     + (selIds.has(n.id)      ? ' msel'    : '')
-    + (connFrom === n.id     ? ' csrc'    : '');
+    + (connFrom === n.id     ? ' csrc'    : '')
+    + (_dupVideo && n.videoFile === _dupVideo && n.id !== selId && !selIds.has(n.id) ? ' dup' : '');
 
   const ball = el.querySelector('.nb');
   const icon = el.querySelector('.ni');
@@ -971,8 +975,19 @@ function applyNode(el, n) {
   const c = n.color || '#a29bfe';
   const glowR = Math.round(nodeSize * 0.3);
   ball.style.background  = `radial-gradient(circle at 35% 30%, ${adj(c,60)} 0%, ${c} 45%, ${adj(c,-52)} 100%)`;
-  ball.style.borderColor = adj(c, 22);
-  ball.style.boxShadow   = `0 0 ${glowR}px ${c}88, 0 0 ${glowR*2}px ${c}44, inset 0 0 ${Math.round(glowR*0.8)}px rgba(0,0,0,0.32)`;
+  ball.style.color       = c;
+
+  // Selection / dup overrides border + box-shadow inline (CSS !important lost to inline style)
+  const isSel  = selId === n.id;
+  const isMsel = selIds.has(n.id);
+  const isDup  = (_dupVideo && n.videoFile === _dupVideo && n.id !== selId && !selIds.has(n.id));
+  if (isSel || isMsel || isDup) {
+    ball.style.borderColor = '#fff';
+    ball.style.boxShadow   = `0 0 ${glowR}px ${c}88, 0 0 ${glowR*2}px ${c}44, inset 0 0 ${Math.round(glowR*0.8)}px rgba(0,0,0,0.32), 0 0 8px 2px rgba(255,255,255,0.55)`;
+  } else {
+    ball.style.borderColor = adj(c, 22);
+    ball.style.boxShadow   = `0 0 ${glowR}px ${c}88, 0 0 ${glowR*2}px ${c}44, inset 0 0 ${Math.round(glowR*0.8)}px rgba(0,0,0,0.32)`;
+  }
   ball.style.color       = c;
   icon.textContent = n.icon || '●';
 
@@ -1317,9 +1332,10 @@ function onNClick(id, e) {
   if (selIds.size > 1) { selIds.clear(); }
 
   if (mode === 'view') {
-    if (n.videoFile) openVid(n); else { selId=id; openSB(n); }
+    if (n.videoFile) { selId=id; openSB(n); openVid(n); } else { selId=id; openSB(n); }
+    renderNodes();
   } else if (mode === 'node' || mode === 'lbl' || mode === 'addnode') {
-    selId = id; openSB(n);
+    selId = id; openSB(n); renderNodes();
   } else if (mode === 'conn') {
     if (!connFrom) { connFrom = id; selId = id; openSB(n); showToast('Click target node'); renderNodes(); }
     else if (connFrom === id) {
@@ -1390,6 +1406,10 @@ function onKey(e) {
     else if (selId) delSelected();
     else if (selConnId) { delConn(selConnId); selConnId = null; }
   }
+  // Ctrl+C — copy selected node(s)
+  if (e.key==='c' && e.ctrlKey) { e.preventDefault(); copyNodes(); return; }
+  // Ctrl+V — paste copied node(s)
+  if (e.key==='v' && e.ctrlKey) { e.preventDefault(); pasteNodes(); return; }
   // Ctrl+A — select all nodes
   if (e.key==='a' && e.ctrlKey) {
     e.preventDefault();
@@ -1723,22 +1743,52 @@ function syncNode() {
   if (!n) return;
   n.label     = document.getElementById('pl').value;
   n.icon      = document.getElementById('pi').value || '●';
-  const newVideo = document.getElementById('pv').value;
-  // Enforce uniqueness: one video path may only be linked to one node
-  if (newVideo && newVideo !== n.videoFile) {
-    const existing = S.nodes.find(o => o.id !== selId && o.videoFile === newVideo);
-    if (existing) {
-      existing.videoFile = '';
-      showToast(`Unlinked "${existing.label}" — video reassigned`);
-    }
-  }
-  n.videoFile = newVideo;
+  n.videoFile = document.getElementById('pv').value;
   n.shape     = _sbShape;
   document.getElementById('vf').style.display = n.shape === 'lbl' ? 'none' : '';
   render(); autoSave();
 }
 
-// ── Emoji picker ───────────────────────────────────────────────────────────
+// ── Copy / Paste ───────────────────────────────────────────────────────────
+let _clipboard = [];  // [{...node snapshot}]
+
+function copyNodes() {
+  const ids = selIds.size > 1 ? [...selIds] : (selId ? [selId] : []);
+  if (!ids.length) return;
+  _clipboard = ids.map(id => {
+    const n = S.nodes.find(n => n.id === id);
+    return n ? JSON.parse(JSON.stringify(n)) : null;
+  }).filter(Boolean);
+  showToast(`Copied ${_clipboard.length} node${_clipboard.length > 1 ? 's' : ''}`);
+}
+
+function pasteNodes() {
+  if (!_clipboard.length) return;
+  pushUndo();
+  const offset = 2; // grid cells offset per paste
+  selId = null;
+  selIds.clear();
+  const newNodes = _clipboard.map(snap => {
+    const n = JSON.parse(JSON.stringify(snap));
+    n.id  = nid();
+    n.col = Math.max(1, Math.min(CW - 2, n.col + offset));
+    n.row = Math.max(1, Math.min(CH - 2, n.row + offset));
+    S.nodes.push(n);
+    selIds.add(n.id);
+    return n;
+  });
+  if (newNodes.length === 1) {
+    selId = newNodes[0].id;
+    selIds.clear();
+    openSB(newNodes[0]);
+  } else {
+    openMultiSB();
+  }
+  render(); autoSave();
+  showToast(`Pasted ${newNodes.length} node${newNodes.length > 1 ? 's' : ''}`);
+}
+
+
 const _EMOJIS = [
   '👍','👎','👏','🙌','🤝','✌️','👋','🤜','💪','🫶','❤️','💔',
   '⭐','🌟','✨','🔥','💥','⚡','🎯','🎲','🎮','🏆','🥇','🎪',
