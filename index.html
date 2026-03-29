@@ -100,13 +100,13 @@ body {
   position: absolute; top: 0; left: 0; overflow: visible;
   pointer-events: none;
 }
-#svg-layer .chit { pointer-events: stroke; cursor: pointer; }
-#nl { position: absolute; top: 0; left: 0; }
+#svg-layer .chit { pointer-events: all; cursor: pointer; }
+#nl { position: absolute; top: 0; left: 0; pointer-events: none; }
 
 /* ── Nodes ──────────────────────────────────────────────────────────────── */
 .node {
   position: absolute; transform: translate(-50%, -50%);
-  cursor: pointer; z-index: 10;
+  cursor: pointer; z-index: 10; pointer-events: auto;
 }
 .nb {                          /* node ball — width/height set inline by JS */
   border-radius: 50%;
@@ -555,6 +555,7 @@ const cid = () => 'c' + (UID++);
 let mode      = 'view';
 let selId     = null;
 let selIds    = new Set();   // multi-selection
+let selConnId = null;        // selected connection
 let connFrom  = null;
 let drag      = null;        // { id }  — single-node drag
 let groupDrag = null;        // { startCol, startRow, origins:{id:{col,row}} }
@@ -849,11 +850,20 @@ function renderConns() {
     const d = pathD(p1, p2);
     if (!d) return;
 
+    const isSel  = c.id === selConnId;
     const stroke = c.color || 'rgba(255,255,255,0.45)';
+    const sw     = isSel ? '2' : '1.5';
     const marker = c.dashed ? 'url(#ah2)' : 'url(#ah)';
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
 
-    const path = mkPath(d, { stroke, 'stroke-width':'1.5', fill:'none',
+    if (isSel) {
+      const underlay = mkPath(d, { stroke: 'rgba(255,255,255,0.08)', 'stroke-width': '1',
+        fill: 'none', 'stroke-dasharray': 'none',
+        'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
+      g.appendChild(underlay);
+    }
+
+    const path = mkPath(d, { stroke, 'stroke-width': sw, fill:'none',
       'stroke-dasharray': c.dashed ? '7,4' : 'none', 'marker-end': marker });
 
     const hit = mkPath(d, { stroke:'transparent', 'stroke-width':'14', fill:'none' });
@@ -1110,6 +1120,7 @@ function onNClick(id, e) {
   if (drag || groupDrag) return;
   const n = S.nodes.find(n => n.id === id);
   if (!n) return;
+  if (selConnId) { selConnId = null; renderConns(); }
 
   // Shift/Ctrl-click: toggle multi-selection (view mode only)
   if (e.shiftKey || e.ctrlKey) {
@@ -1178,7 +1189,19 @@ function onNLeave() {
 
 function onCClick(id, e) {
   e.stopPropagation();
-  if (mode === 'del') delConn(id);
+  if (mode === 'del') { delConn(id); return; }
+  // Toggle selection
+  if (selConnId === id) {
+    selConnId = null;
+    renderConns();
+  } else {
+    selConnId = id;
+    selId = null; selIds.clear();
+    sb.classList.remove('open');
+    renderConns();
+    renderNodes();
+    showToast('Connection selected — Delete to remove');
+  }
 }
 
 function onCCtx(id, e) {
@@ -1197,6 +1220,7 @@ function onKey(e) {
   if (e.key==='Delete'||e.key==='Backspace') {
     if (selIds.size > 1) delMultiSelected();
     else if (selId) delSelected();
+    else if (selConnId) { delConn(selConnId); selConnId = null; }
   }
   // Ctrl+A — select all nodes
   if (e.key==='a' && e.ctrlKey) {
@@ -1341,6 +1365,7 @@ function addConn(from, to) {
 
 function delConn(id) {
   pushUndo();
+  if (selConnId === id) selConnId = null;
   S.conns = S.conns.filter(c => c.id !== id);
   renderConns(); autoSave();
   if (selId) updConnList(selId);
@@ -1370,7 +1395,7 @@ function openMultiSB() {
   sb.classList.add('open');
 }
 
-function desel() { selId = null; selIds.clear(); sb.classList.remove('open'); renderNodes(); }
+function desel() { selId = null; selIds.clear(); selConnId = null; sb.classList.remove('open'); render(); }
 
 function updConnList(id) {
   const out = S.conns.filter(c => c.from===id);
