@@ -847,6 +847,9 @@ function onCvWheel(e) {
   const cx = e.clientX - cwRect.left;
   const cy = e.clientY - cwRect.top;
   const sl = cw.scrollLeft, st = cw.scrollTop;
+  // Scale node size proportionally, snapped to step=2, clamped 18-120
+  const newSize = Math.min(120, Math.max(18, Math.round(nodeSize * k / 2) * 2));
+  setNodeSize(newSize);
   sizeCanvas(); render();
   cw.scrollLeft = (sl + cx) * kx - cx;
   cw.scrollTop  = (st + cy) * ky - cy;
