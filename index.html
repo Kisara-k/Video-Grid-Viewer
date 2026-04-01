@@ -766,6 +766,22 @@ function syncViewUI() {
   document.getElementById('grows').value = CH;
   document.getElementById('nsize').value = nodeSize;
   document.getElementById('nsizev').textContent = nodeSize+'px';
+  // speed
+  const spos = spdToPos(defaultSpeed);
+  document.getElementById('spd').value          = spos;
+  document.getElementById('spd2').value         = spos;
+  document.getElementById('spdv').textContent   = defaultSpeed.toFixed(2) + '×';
+  document.getElementById('spdv2').textContent  = defaultSpeed.toFixed(2) + '×';
+  // volume
+  document.getElementById('vol').value          = defaultVolume;
+  document.getElementById('volv').textContent   = Math.round(defaultVolume * 100) + '%';
+  document.getElementById('vp').volume          = defaultVolume;
+  // mode buttons
+  const _modeMap = { view:'bv', node:'bn', addnode:'ba', lbl:'bl', conn:'bc', del:'bd' };
+  ['bv','bn','ba','bl','bc','bd'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.remove('on'); });
+  const _mBtn = _modeMap[mode]; if (_mBtn) document.getElementById(_mBtn).classList.add('on');
+  document.getElementById('hint').textContent   = HINTS[mode] || '';
+  canvas.style.cursor = (mode === 'addnode' || mode === 'lbl') ? 'crosshair' : (mode === 'view' || mode === 'node' ? 'grab' : 'default');
 }
 
 function buildPal() {
@@ -895,6 +911,7 @@ function setMode(m) {
   canvas.style.cursor = (m === 'addnode' || m === 'lbl') ? 'crosshair' : (m === 'view' || m === 'node' ? 'grab' : 'default');
   if (m !== 'addnode' && m !== 'lbl') ghost.style.display = 'none';
   renderNodes();
+  autoSave();
 }
 
 // ── Render ─────────────────────────────────────────────────────────────────
@@ -1964,7 +1981,8 @@ function ctxDel()  {
 }
 
 // ── Video ──────────────────────────────────────────────────────────────────
-let defaultSpeed = 1;
+let defaultSpeed  = 1;
+let defaultVolume = 1;
 let vmScale  = 1;
 let vmBaseH  = 0;  // base px height at scale=1, set once video metadata known
 let vmNode   = null; // node currently playing in the modal
@@ -1984,11 +2002,13 @@ function spdToPos(spd) {
 
 function setVolume(val) {
   val = Math.min(1, Math.max(0, val));
+  defaultVolume = val;
   const vp = document.getElementById('vp');
   const slider = document.getElementById('vol');
   vp.volume = val;
   slider.value = val;
   document.getElementById('volv').textContent = Math.round(val * 100) + '%';
+  autoSave();
 }
 
 function setSpeedPos(pos) {
@@ -2001,6 +2021,7 @@ function setSpeedPos(pos) {
   document.getElementById('spdv2').textContent = label;
   const vp = document.getElementById('vp');
   if (!document.getElementById('vm').classList.contains('hidden')) vp.playbackRate = spd;
+  autoSave();
 }
 
 function _positionVmNotes() {
@@ -2154,7 +2175,7 @@ function doExport() {
 }
 
 function viewState() {
-  return { zoomX, zoomY, CW, CH, nodeSize };
+  return { zoomX, zoomY, CW, CH, nodeSize, speed: defaultSpeed, volume: defaultVolume, mode };
 }
 
 function legacyImport() {
@@ -2174,6 +2195,9 @@ function applyView(v) {
   if (v.CW)       CW       = v.CW;
   if (v.CH)       CH       = v.CH;
   if (v.nodeSize) { nodeSize = v.nodeSize; NR = nodeSize / 2; }
+  if (v.speed  != null) defaultSpeed  = v.speed;
+  if (v.volume != null) defaultVolume = v.volume;
+  if (v.mode)           mode          = v.mode;
 }
 
 function parseLoad(text) {
